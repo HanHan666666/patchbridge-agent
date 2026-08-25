@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PatchBridge Agent 父 POM。
+
+  项目定位：面向存量企业 Web 系统（Java 8 / Spring Boot 2.x 优先）的轻量 Agent 集成框架。
+  本 POM 只做两件事：
+    1. 统一子模块的编译级别（Java 8）与依赖版本管理；
+    2. 通过 spring-boot-dependencies BOM 对齐 Jackson / Spring 等版本，
+       但 core / annotations 模块本身不依赖 Spring（设计约束：Spring 是 Adapter，不是 Core）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.patchbridge.agent</groupId>
+    <artifactId>patchbridge-agent-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>PatchBridge Agent Parent</name>
+    <description>Browser runs Agent. Server runs Business. LLM does Reasoning.</description>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/license/mit</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <modules>
+        <module>patchbridge-agent-annotations</module>
+        <module>patchbridge-agent-core</module>
+        <module>patchbridge-agent-model-openai</module>
+        <module>patchbridge-agent-model-webflux</module>
+        <module>patchbridge-agent-storage-jdbc</module>
+        <module>patchbridge-agent-mcp</module>
+        <module>patchbridge-agent-spring-boot2-starter</module>
+        <module>patchbridge-agent-demo</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.parameters>true</maven.compiler.parameters>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <spring-boot.version>2.7.18</spring-boot.version>
+        <!-- OkHttp 选择 3.14.x：最后一条纯 Java 8 实现线，不带 Kotlin stdlib，
+             避免给存量企业系统引入额外依赖树（victools 同理不进 core）。 -->
+        <okhttp.version>3.14.9</okhttp.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 框架内部模块 -->
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-annotations</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-model-openai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-model-webflux</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-storage-jdbc</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <!-- OkHttp 官方 SSE 组件：模型网关上游流式解析使用官方实现，
+                 保证 W3C event-stream 合规（多行 data 以 \n 连接、注释行忽略） -->
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp-sse</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

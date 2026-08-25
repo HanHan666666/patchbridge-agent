@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<!--
+  PatchBridge Agent 管理后台（轻量静态页）。
+
+  业务定位：审计 Trace 查询 / 调用统计 / Global MCP Server 配置与诊断。
+  页面随 Starter 打包并由 /ai-admin/** 提供；访问控制由宿主安全体系负责
+  （demo 中限 ADMIN / AUDITOR），本页面不内置任何权限逻辑。
+  MCP 第一版只支持 Global；properties 源只读，JDBC 源支持单向凭据写入。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PatchBridge Agent · 管理后台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: #f3f4f6; color: #1f2937; }
+  header { background: #111827; color: #fff; padding: 14px 24px; display: flex; align-items: baseline; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header span { font-size: 12px; color: #9ca3af; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; color: #374151; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+  .stat-card .label { font-size: 12px; color: #6b7280; }
+  .stat-card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .filters { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .filters input, .filters select { height: 30px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 8px; font-size: 13px; }
+  .filters input { width: 140px; }
+  .filters button { height: 30px; border: none; border-radius: 6px; background: #2563eb; color: #fff; padding: 0 16px; cursor: pointer; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #f3f4f6; }
+  th { background: #f9fafb; color: #6b7280; font-weight: 500; white-space: nowrap; }
+  td.trace-id { font-family: ui-monospace, Consolas, monospace; color: #2563eb; cursor: pointer; }
+  td.trace-id:hover { text-decoration: underline; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .badge.ok { background: #d1fae5; color: #047857; }
+  .badge.fail { background: #fee2e2; color: #b91c1c; }
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; font-size: 13px; color: #6b7280; }
+  .pager button { height: 28px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+  .mcp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .mcp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
+  .mcp-card .mcp-head { display: flex; align-items: center; gap: 8px; }
+  .mcp-card .name { font-weight: 600; font-size: 14px; flex: 1; }
+  .mcp-card .url { font-size: 12px; color: #6b7280; margin: 6px 0; word-break: break-all; }
+  .mcp-card .row { font-size: 13px; color: #374151; margin: 2px 0; }
+  .mcp-card button { height: 26px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-top: 8px; }
+  .section-head { display: flex; align-items: center; gap: 10px; margin-top: 28px; }
+  .section-head h2 { margin: 0; }
+  .section-head .source { color: #6b7280; font-size: 12px; flex: 1; }
+  .primary { border: 0; border-radius: 6px; background: #2563eb; color: #fff; padding: 7px 14px; cursor: pointer; }
+  .mcp-form { background: #fff; border: 1px solid #dbeafe; border-radius: 8px; padding: 14px 16px; margin: 10px 0 12px; }
+  .mcp-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 12px; }
+  .mcp-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #4b5563; }
+  .mcp-form input, .mcp-form select, .mcp-form textarea { border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 8px; font: inherit; color: #111827; }
+  .mcp-form textarea { min-height: 72px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .mcp-form .wide { grid-column: 1 / -1; }
+  .mcp-form-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .mcp-form-actions button { border: 1px solid #d1d5db; border-radius: 6px; background: #fff; padding: 7px 14px; cursor: pointer; }
+  .mcp-form-actions button[type="submit"] { border-color: #2563eb; background: #2563eb; color: #fff; }
+  .detail { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 0; margin-bottom: 12px; }
+  .detail .event { padding: 8px 16px; border-bottom: 1px dashed #f3f4f6; }
+  .detail .event:last-child { border-bottom: none; }
+  .detail .event .head { display: flex; gap: 10px; align-items: baseline; }
+  .detail .event .name { font-weight: 600; }
+  .detail .event pre { background: #f9fafb; border-radius: 6px; padding: 8px; font-size: 12px; margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+  .empty { color: #9ca3af; font-size: 13px; padding: 16px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PatchBridge Agent 管理后台</h1>
+  <span>审计 Trace · 调用统计 · MCP 状态</span>
+</header>
+<main>
+  <h2>调用统计</h2>
+  <div class="stats" id="stats"></div>
+
+  <h2>审计 Trace 查询</h2>
+  <div class="filters" id="filters">
+    <input id="f-traceId" placeholder="traceId">
+    <input id="f-username" placeholder="用户名">
+    <select id="f-type">
+      <option value="">全部类型</option>
+      <option value="MODEL">MODEL</option>
+      <option value="TOOL">TOOL</option>
+      <option value="MCP_TOOL">MCP_TOOL</option>
+    </select>
+    <input id="f-name" placeholder="目标名称">
+    <select id="f-success">
+      <option value="">全部结果</option>
+      <option value="true">仅成功</option>
+      <option value="false">仅失败</option>
+    </select>
+    <input id="f-from" type="date">
+    <input id="f-to" type="date">
+    <button id="btn-search">查询</button>
+  </div>
+  <div class="detail" id="trace-detail" hidden></div>
+  <table>
+    <thead>
+      <tr>
+        <th>时间</th><th>traceId</th><th>用户</th><th>类型</th><th>目标</th>
+        <th>结果</th><th>耗时</th><th>错误</th>
+      </tr>
+    </thead>
+    <tbody id="trace-rows"></tbody>
+  </table>
+  <div class="pager">
+    <button id="btn-prev">上一页</button>
+    <span id="page-info"></span>
+    <button id="btn-next">下一页</button>
+  </div>
+
+  <div class="section-head">
+    <h2>Global MCP Server</h2>
+    <span class="source" id="mcp-source"></span>
+    <button class="primary" id="btn-mcp-create" type="button" hidden>新增 Server</button>
+  </div>
+  <form class="mcp-form" id="mcp-form" hidden>
+    <p style="margin:0 0 10px;color:#92400e;font-size:12px">
+      安全边界：Global MCP 会从服务端访问此 URL。生产环境请同时用网络出口、
+      防火墙或代理限制允许的目标网段。
+    </p>
+    <input id="mcp-revision" type="hidden">
+    <div class="mcp-form-grid">
+      <label>Server 名称<input id="mcp-name" required maxlength="64" placeholder="inventory"></label>
+      <label>URL<input id="mcp-url" type="url" required placeholder="https://mcp.example.com/mcp"></label>
+      <label>认证类型
+        <select id="mcp-auth-type">
+          <option value="none">none</option><option value="basic">basic</option>
+          <option value="bearer">bearer</option><option value="api-key-header">api-key-header</option>
+          <option value="static-headers">static-headers</option>
+        </select>
+      </label>
+      <label>请求超时(ms)<input id="mcp-timeout" type="number" min="100" max="300000" value="30000"></label>
+      <label>Tool 缓存 TTL(ms)<input id="mcp-ttl" type="number" min="1000" max="86400000" value="300000"></label>
+      <label><span>启用</span><input id="mcp-enabled" type="checkbox" checked></label>
+      <label class="wide">凭据 JSON（只写；编辑时留空表示 KEEP）
+        <textarea id="mcp-credentials" placeholder='bearer: {"token":"..."}; basic: {"username":"...","password":"..."}'></textarea>
+      </label>
+      <label>Include（逗号分隔）<input id="mcp-include" placeholder="tool_a,tool_b"></label>
+      <label>Exclude（逗号分隔）<input id="mcp-exclude" placeholder="dangerous_tool"></label>
+      <label class="wide">Tool 权限 JSON
+        <textarea id="mcp-permissions" placeholder='{"tool_a":"ai:mcp:read"}'>{}</textarea>
+      </label>
+    </div>
+    <div class="mcp-form-actions">
+      <button type="submit">保存</button><button id="btn-mcp-cancel" type="button">取消</button>
+    </div>
+  </form>
+  <div class="mcp-grid" id="mcp-grid"></div>
+</main>
+
+<script>
+/**
+ * 管理后台前端逻辑：审计只读查询 + Global MCP 配置与诊断。
+ * 无框架依赖，直接 fetch + DOM 拼装；凭据输入从不回填。
+ */
+(function () {
+  'use strict';
+
+  var state = {
+    page: 0,
+    pageSize: 20,
+    total: 0,
+    mcpMutable: false,
+    mcpServers: [],
+    apiBasePath: null,
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function escapeHtml(text) {
+    if (text == null) { return ''; }
+    return String(text)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function formatTime(value) {
+    if (value == null) { return '-'; }
+    return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  }
+
+  function requestJson(url, options) {
+    var init = options || {};
+    init.credentials = 'same-origin';
+    if (init.body) { init.headers = { 'Content-Type': 'application/json' }; }
+    return fetch(url, init).then(function (response) {
+      return response.text().then(function (text) {
+        var body = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          throw new Error(body && body.error ? body.error.message : 'HTTP ' + response.status);
+        }
+        return body;
+      });
+    });
+  }
+
+  function fetchJson(url) {
+    return requestJson(url);
+  }
+
+  // 静态管理页不能猜测宿主配置的 API 前缀，只使用服务端显式下发的值。
+  function adminApi(path) {
+    if (!state.apiBasePath) {
+      throw new Error('管理后台尚未取得 API 前缀');
+    }
+    return state.apiBasePath + '/admin' + path;
+  }
+
+  // ---------- 统计 ----------
+
+  function loadStats() {
+    fetchJson(adminApi('/stats')).then(function (stats) {
+      var cards = [
+        ['总调用', stats.totalInvocations],
+        ['模型调用', stats.modelCalls],
+        ['本地工具', stats.toolCalls],
+        ['MCP 工具', stats.mcpToolCalls],
+        ['成功', stats.successCount],
+        ['失败', stats.failedCount],
+        ['P50 耗时（最近一万次）', stats.p50DurationMs + ' ms'],
+        ['P95 耗时（最近一万次）', stats.p95DurationMs + ' ms'],
+      ];
+      $('stats').innerHTML = cards.map(function (card) {
+        return '<div class="stat-card"><div class="label">' + escapeHtml(card[0])
+            + '</div><div class="value">' + escapeHtml(card[1]) + '</div></div>';
+      }).join('');
+    }).catch(showAdminError);
+  }
+
+  // ---------- Trace 查询 ----------
+
+  function queryParams() {
+    var params = new URLSearchParams();
+    var traceId = $('f-traceId').value.trim();
+    var username = $('f-username').value.trim();
+    var type = $('f-type').value;
+    var name = $('f-name').value.trim();
+    var success = $('f-success').value;
+    var from = $('f-from').value;
+    var to = $('f-to').value;
+    if (traceId) { params.set('traceId', traceId); }
+    if (username) { params.set('username', username); }
+    if (type) { params.set('type', type); }
+    if (name) { params.set('name', name); }
+    if (success) { params.set('success', success); }
+    if (from) { params.set('from', from); }
+    if (to) { params.set('to', to); }
+    params.set('page', state.page);
+    params.set('pageSize', state.pageSize);
+    return params.toString();
+  }
+
+  function loadTraces() {
+    fetchJson(adminApi('/traces?') + queryParams()).then(function (body) {
+      state.total = body.total;
+      $('page-info').textContent = '共 ' + body.total + ' 条 · 第 ' + (state.page + 1) + ' 页';
+      if (!body.items || body.items.length === 0) {
+        $('trace-rows').innerHTML = '<tr><td colspan="8" class="empty">暂无记录</td></tr>';
+        return;
+      }
+      $('trace-rows').innerHTML = body.items.map(function (event) {
+        var error = event.errorCode
+            ? escapeHtml(event.errorCode) + (event.errorMessage ? ' ' + escapeHtml(event.errorMessage) : '')
+            : '-';
+        return '<tr>'
+            + '<td>' + escapeHtml(formatTime(event.startedAt)) + '</td>'
+            + '<td class="trace-id" data-trace="' + escapeHtml(event.traceId) + '">'
+              + escapeHtml(event.traceId) + '</td>'
+            + '<td>' + escapeHtml(event.username || event.userId || '-') + '</td>'
+            + '<td>' + escapeHtml(event.type) + '</td>'
+            + '<td>' + escapeHtml(event.name) + '</td>'
+            + '<td><span class="badge ' + (event.success ? 'ok' : 'fail') + '">'
+              + (event.success ? '成功' : '失败') + '</span></td>'
+            + '<td>' + event.durationMs + ' ms</td>'
+            + '<td>' + error + '</td>'
+            + '</tr>';
+      }).join('');
+    }).catch(showAdminError);
+  }
+
+  function loadTraceDetail(traceId) {
+    fetchJson(adminApi('/traces/') + encodeURIComponent(traceId)).then(function (body) {
+      var container = $('trace-detail');
+      container.hidden = false;
+      container.innerHTML = '<div class="event"><b>Trace ' + escapeHtml(traceId)
+          + '</b>（按发生顺序，点击其他 traceId 可切换）</div>' + body.items.map(function (event) {
+        return '<div class="event">'
+            + '<div class="head"><span class="name">'
+            + escapeHtml(event.type + ' · ' + event.name) + '</span>'
+            + '<span class="badge ' + (event.success ? 'ok' : 'fail') + '">'
+              + (event.success ? '成功' : '失败') + '</span>'
+            + '<span>' + escapeHtml(formatTime(event.startedAt)) + ' · ' + event.durationMs + ' ms</span></div>'
+            + (event.requestSummary
+                ? '<pre>请求摘要：' + escapeHtml(event.requestSummary) + '</pre>' : '')
+            + (event.responseSummary
+                ? '<pre>响应摘要：' + escapeHtml(event.responseSummary) + '</pre>' : '')
+            + '</div>';
+      }).join('');
+      container.scrollIntoView({ behavior: 'smooth' });
+    }).catch(showAdminError);
+  }
+
+  // ---------- MCP 状态 ----------
+
+  function loadMcpServers() {
+    fetchJson(adminApi('/mcp/servers')).then(function (body) {
+      state.mcpMutable = body.mutable === true;
+      state.mcpServers = body.servers || [];
+      $('mcp-source').textContent = '配置源：' + body.source
+          + (body.mutable ? '（可在线管理）' : '（只读）');
+      $('btn-mcp-create').hidden = !state.mcpMutable;
+      if (!body.servers || body.servers.length === 0) {
+        $('mcp-grid').innerHTML = '<div class="empty">未配置 MCP Server</div>';
+        return;
+      }
+      $('mcp-grid').innerHTML = body.servers.map(function (server) {
+        var statusBadge = server.status === 'UP'
+            ? '<span class="badge ok">UP</span>'
+            : '<span class="badge fail">' + escapeHtml(server.status) + '</span>';
+        return '<div class="mcp-card" data-server="' + escapeHtml(server.name) + '">'
+            + '<div class="mcp-head"><span class="name">' + escapeHtml(server.name) + '</span>' + statusBadge + '</div>'
+            + '<div class="url">' + escapeHtml(server.url) + '</div>'
+            + '<div class="row">认证：' + escapeHtml(server.authType)
+              + (server.credentialConfigured ? '（已配置凭据）' : '')
+              + ' · revision ' + server.revision + '</div>'
+            + '<div class="row">工具数：' + server.toolCount + ' · 上次延迟：' + server.lastLatencyMs + ' ms</div>'
+            + '<div class="row">上次刷新：' + escapeHtml(formatTime(server.lastRefreshAt)) + '</div>'
+            + (server.lastError ? '<div class="row" style="color:#b91c1c">错误：' + escapeHtml(server.lastError) + '</div>' : '')
+            + '<button data-action="refresh">刷新工具</button>'
+            + '<button data-action="test">连通性测试</button>'
+            + '<button data-action="tools">查看 Tools</button>'
+            + (state.mcpMutable
+              ? '<button data-action="edit">编辑</button>'
+                + '<button data-action="toggle">' + (server.enabled ? '停用' : '启用') + '</button>'
+                + '<button data-action="delete">删除</button>' : '')
+            + '</div>';
+      }).join('');
+    }).catch(showAdminError);
+  }
+
+  function mcpAction(name, action) {
+    var url = adminApi('/mcp/servers/') + encodeURIComponent(name) + '/' + action;
+    requestJson(url, { method: 'POST' })
+      .then(function (body) {
+        if (action === 'test') {
+          window.alert(body.ok
+            ? '连接正常，延迟 ' + body.latencyMs + ' ms'
+            : '连接失败：' + body.error);
+        }
+        loadMcpServers();
+      })
+      .catch(showAdminError);
+  }
+
+  function commaList(value) {
+    if (!value.trim()) { return []; }
+    return value.split(',').map(function (item) { return item.trim(); })
+      .filter(function (item) { return item.length > 0; });
+  }
+
+  function openMcpForm(server) {
+    $('mcp-form').hidden = false;
+    $('mcp-revision').value = server ? server.revision : '';
+    $('mcp-name').value = server ? server.name : '';
+    $('mcp-name').disabled = !!server;
+    $('mcp-url').value = server ? server.url : '';
+    $('mcp-auth-type').value = server ? server.authType : 'none';
+    $('mcp-timeout').value = server ? server.timeoutMs : 30000;
+    $('mcp-ttl').value = server ? server.cacheTtlMs : 300000;
+    $('mcp-enabled').checked = server ? server.enabled : true;
+    // 凭据只写：编辑时不将任何已存值返回 DOM。
+    $('mcp-credentials').value = '';
+    $('mcp-include').value = server && server.tools.include ? server.tools.include.join(',') : '';
+    $('mcp-exclude').value = server && server.tools.exclude ? server.tools.exclude.join(',') : '';
+    $('mcp-permissions').value = JSON.stringify(
+      server && server.tools.permissions ? server.tools.permissions : {}, null, 2);
+    $('mcp-name').focus();
+  }
+
+  function closeMcpForm() {
+    $('mcp-form').hidden = true;
+    $('mcp-form').reset();
+    $('mcp-name').disabled = false;
+  }
+
+  function saveMcpServer(event) {
+    event.preventDefault();
+    var revisionText = $('mcp-revision').value;
+    var authType = $('mcp-auth-type').value;
+    var credentialText = $('mcp-credentials').value.trim();
+    var credentials = credentialText ? JSON.parse(credentialText) : {};
+    credentials.type = authType;
+    var payload = {
+      name: $('mcp-name').value.trim(),
+      url: $('mcp-url').value.trim(),
+      transport: 'streamable-http',
+      enabled: $('mcp-enabled').checked,
+      timeoutMs: Number($('mcp-timeout').value),
+      cacheTtlMs: Number($('mcp-ttl').value),
+      auth: credentials,
+      tools: {
+        include: commaList($('mcp-include').value),
+        exclude: commaList($('mcp-exclude').value),
+        permissions: JSON.parse($('mcp-permissions').value || '{}'),
+      },
+    };
+    var url = adminApi('/mcp/servers');
+    var method = 'POST';
+    if (revisionText !== '') {
+      method = 'PUT';
+      url += '/' + encodeURIComponent(payload.name);
+      payload.revision = Number(revisionText);
+      payload.credentialUpdate = authType === 'none' ? 'CLEAR'
+          : (credentialText ? 'REPLACE' : 'KEEP');
+    }
+    requestJson(url, { method: method, body: JSON.stringify(payload) })
+      .then(function () { closeMcpForm(); loadMcpServers(); })
+      .catch(showAdminError);
+  }
+
+  function findMcpServer(name) {
+    return state.mcpServers.find(function (server) { return server.name === name; });
+  }
+
+  function toggleMcpServer(server) {
+    requestJson(adminApi('/mcp/servers/') + encodeURIComponent(server.name) + '/enabled', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: !server.enabled, revision: server.revision }),
+    }).then(loadMcpServers).catch(showAdminError);
+  }
+
+  function deleteMcpServer(server) {
+    if (!window.confirm('确定删除 MCP Server "' + server.name + '"？')) { return; }
+    requestJson(adminApi('/mcp/servers/') + encodeURIComponent(server.name)
+        + '?revision=' + server.revision, { method: 'DELETE' })
+      .then(loadMcpServers).catch(showAdminError);
+  }
+
+  function showMcpTools(server) {
+    fetchJson(adminApi('/mcp/servers/') + encodeURIComponent(server.name) + '/tools')
+      .then(function (body) {
+        var names = (body.tools || []).map(function (tool) { return tool.name; });
+        window.alert(names.length ? names.join('\n') : '当前尚未发现 Tool');
+      }).catch(showAdminError);
+  }
+
+  // ---------- 错误与事件绑定 ----------
+
+  function showAdminError(error) {
+    window.alert('管理后台请求失败：' + error.message
+        + (String(error.message).indexOf('401') >= 0 ? '（未登录或无权限）' : ''));
+  }
+
+  $('btn-search').addEventListener('click', function () {
+    state.page = 0;
+    loadTraces();
+  });
+  $('btn-prev').addEventListener('click', function () {
+    if (state.page > 0) { state.page -= 1; loadTraces(); }
+  });
+  $('btn-next').addEventListener('click', function () {
+    if ((state.page + 1) * state.pageSize < state.total) { state.page += 1; loadTraces(); }
+  });
+  $('trace-rows').addEventListener('click', function (event) {
+    var cell = event.target.closest('[data-trace]');
+    if (cell) { loadTraceDetail(cell.dataset.trace); }
+  });
+  $('mcp-grid').addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-action]');
+    if (!button) { return; }
+    var card = event.target.closest('[data-server]');
+    if (!card) { return; }
+    var server = findMcpServer(card.dataset.server);
+    var action = button.dataset.action;
+    if (action === 'refresh' || action === 'test') { mcpAction(server.name, action); }
+    if (action === 'tools') { showMcpTools(server); }
+    if (action === 'edit') { openMcpForm(server); }
+    if (action === 'toggle') { toggleMcpServer(server); }
+    if (action === 'delete') { deleteMcpServer(server); }
+  });
+  $('btn-mcp-create').addEventListener('click', function () { openMcpForm(null); });
+  $('btn-mcp-cancel').addEventListener('click', closeMcpForm);
+  $('mcp-form').addEventListener('submit', function (event) {
+    try { saveMcpServer(event); } catch (error) { showAdminError(error); }
+  });
+
+  fetchJson('/ai-admin/config').then(function (config) {
+    state.apiBasePath = config.basePath;
+    loadStats();
+    loadTraces();
+    loadMcpServers();
+  }).catch(showAdminError);
+})();
+</script>
+</body>
+</html>

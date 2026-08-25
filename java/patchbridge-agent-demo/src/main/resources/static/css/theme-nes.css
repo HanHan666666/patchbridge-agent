@@ -1,0 +1,120 @@
+/*
+ * 可选主题：NES 像素风（基于第三方 NES.css 2.3.0，MIT，来源见 vendor/README.md）。
+ *
+ * 分工：NES.css 提供招牌像素字体（vendor/press-start-2p.css 本地化）与页签上
+ * 的 nes-btn 像素按钮（类常驻在元素上、随样式表启停生效，选中态仍由页面令牌
+ * 控制以保持与其他主题一致的 aria 语义）；其余页面与组件视觉由令牌按它的
+ * 色板取值：白底、纯黑 4px 直角描边、红 / 蓝 / 黄三原色点缀。
+ * 该库带全局 reset / typography，仅在选中本主题时启用（页面脚本控制）。
+ */
+body[data-theme="nes"] {
+    color-scheme: light;
+    --page-font-family: "Press Start 2P", "Microsoft YaHei", monospace;
+    --page-background: #ffffff;
+    --page-text: #212529;
+    --page-text-muted: #666f77;
+    --page-primary: #209cee;
+    --page-topbar-background: #212529;
+    --page-topbar-color: #ffffff;
+    --page-topbar-border: none;
+    --page-link: #209cee;
+    --page-link-decoration: none;
+    --page-card-background: #ffffff;
+    --page-card-border: 4px solid #212529;
+    --page-card-radius: 0;
+    --page-card-shadow: none;
+    --page-code-background: #e8e8e8;
+    --page-tab-selected-color: #ffffff;
+    --page-tab-selected-background: #e76e55;
+    --page-topbar-control-background: #ffffff;
+    --page-topbar-control-color: #212529;
+    --page-topbar-control-border: #212529;
+}
+
+/* 像素字体 Latin 与 CJK 各走各的字形（中文回落到雅黑），小字号才像 8 位机。 */
+body[data-theme="nes"] .tab-panel patchbridge-agent {
+    --patchbridge-agent-font-family: "Press Start 2P", "Microsoft YaHei", monospace;
+    --patchbridge-agent-font-size: 10px;
+    --patchbridge-agent-font-size-small: 8px;
+    --patchbridge-agent-font-size-caption: 10px;
+    --patchbridge-agent-font-size-title: 12px;
+    --patchbridge-agent-font-size-large: 12px;
+    --patchbridge-agent-border-width: 4px;
+    --patchbridge-agent-color-primary: #209cee;
+    --patchbridge-agent-color-primary-hover: #4db1f0;
+    --patchbridge-agent-color-primary-disabled: #a8c8e8;
+    --patchbridge-agent-color-on-primary: #ffffff;
+    --patchbridge-agent-color-background: #ffffff;
+    --patchbridge-agent-color-surface: #f7f7f7;
+    --patchbridge-agent-color-surface-muted: #efefef;
+    --patchbridge-agent-color-surface-hover: #e0e0e0;
+    --patchbridge-agent-color-surface-active: rgba(247, 213, 29, .35);
+    --patchbridge-agent-color-text: #212529;
+    --patchbridge-agent-color-text-subtle: #333a41;
+    --patchbridge-agent-color-text-muted: #666f77;
+    --patchbridge-agent-color-border: #212529;
+    --patchbridge-agent-color-control-border: #212529;
+    --patchbridge-agent-color-danger: #e76e55;
+    --patchbridge-agent-color-danger-hover: #c9503a;
+    --patchbridge-agent-color-danger-background: #fcebe8;
+    --patchbridge-agent-color-danger-border: #e76e55;
+    --patchbridge-agent-color-warning: #9a7d0a;
+    --patchbridge-agent-color-warning-background: #fdf3c0;
+    --patchbridge-agent-color-warning-border: #f7d51d;
+    --patchbridge-agent-color-reasoning: #6b21a8;
+    --patchbridge-agent-color-reasoning-strong: #581c87;
+    --patchbridge-agent-color-reasoning-background: #f3e8ff;
+    --patchbridge-agent-color-code-background: #e8e8e8;
+    --patchbridge-agent-color-code-block-background: #f0f0f0;
+    --patchbridge-agent-color-overlay: rgba(255, 255, 255, .95);
+    --patchbridge-agent-radius-sm: 0;
+    --patchbridge-agent-radius-md: 0;
+    --patchbridge-agent-radius-lg: 0;
+    --patchbridge-agent-radius-message: 0;
+    --patchbridge-agent-radius-panel: 0;
+}
+
+/* ::part 层：NES.css 的类进不了 Shadow DOM。发送键补一个像素按钮式的
+ * 内嵌硬阴影（NES.css 用 inset 阴影做按压层次），其余直角黑边由令牌完成。 */
+body[data-theme="nes"] .tab-panel patchbridge-agent::part(send-button) {
+    box-shadow: inset -4px -4px rgba(0, 42, 82, .45);
+}
+
+/* 工具块做成 8 位机"对话框"：黑描边面板，调用=蓝、结果=黄的像素左边条。 */
+body[data-theme="nes"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border: 2px solid #212529;
+    border-left: 4px solid #209cee;
+    background: #f7f7f7;
+}
+body[data-theme="nes"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border: 2px solid #212529;
+    border-left: 4px solid #f7d51d;
+    background: #ffffff;
+    padding: 4px 8px;
+}
+
+body[data-theme="nes"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #209cee;
+    --patchbridge-agent-tools-background: #ffffff;
+    --patchbridge-agent-tools-card-background: #ffffff;
+    --patchbridge-agent-tools-border-color: #212529;
+    --patchbridge-agent-tools-color: #212529;
+    --patchbridge-agent-tools-muted-color: #666f77;
+    --patchbridge-agent-tools-code-background: #e8e8e8;
+    --patchbridge-agent-tools-empty-background: #f7f7f7;
+    --patchbridge-agent-tools-error-color: #e76e55;
+    --patchbridge-agent-tools-radius: 0;
+}
+body[data-theme="nes"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #209cee;
+    --patchbridge-agent-trace-background: #ffffff;
+    --patchbridge-agent-trace-card-background: #ffffff;
+    --patchbridge-agent-trace-border-color: #212529;
+    --patchbridge-agent-trace-color: #212529;
+    --patchbridge-agent-trace-muted-color: #666f77;
+    --patchbridge-agent-trace-row-background: #f7f7f7;
+    --patchbridge-agent-trace-detail-background: #e8e8e8;
+    --patchbridge-agent-trace-empty-background: #f7f7f7;
+    --patchbridge-agent-trace-error-color: #e76e55;
+    --patchbridge-agent-trace-radius: 0;
+}

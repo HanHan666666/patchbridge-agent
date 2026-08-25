@@ -1,0 +1,96 @@
+/*
+ * 可选主题：暗色（深夜石墨）。
+ * 特色是“静”：蓝黑底、哑光面板、细线描边，全部冷色调无发光效果，
+ * 与赛博朋克主题的霓虹噪点形成刻意相反的气质；顶栏以一条细蓝灰线收边。
+ */
+body[data-theme="dark"] {
+    color-scheme: dark;
+    --page-primary: #3b82f6;
+    --page-topbar-background: #0b1220;
+    --page-topbar-color: #e5eaf3;
+    --page-topbar-border: 1px solid #2a3a5e;
+    --page-link: #93c5fd;
+    --page-background: #0d1220;
+    --page-text: #e5eaf3;
+    --page-text-muted: #94a3b8;
+    --page-card-background: #1a2333;
+    --page-card-shadow: 0 2px 10px rgba(0, 0, 0, .55);
+    --page-code-background: #0b1220;
+    --page-tab-selected-color: #93c5fd;
+    --page-tab-selected-background: #1d2a45;
+    --page-topbar-control-background: #0b1220;
+    --page-topbar-control-color: #e5eaf3;
+    --page-topbar-control-border: #45577a;
+}
+
+body[data-theme="dark"] .tab-panel patchbridge-agent {
+    color-scheme: dark;
+    --patchbridge-agent-color-primary: #3b82f6;
+    --patchbridge-agent-color-primary-hover: #60a5fa;
+    --patchbridge-agent-color-primary-disabled: #1e40af;
+    --patchbridge-agent-color-background: #1a2333;
+    --patchbridge-agent-color-surface: #101827;
+    --patchbridge-agent-color-surface-muted: #1a2333;
+    --patchbridge-agent-color-surface-hover: #22304a;
+    --patchbridge-agent-color-surface-active: #1d3a8a;
+    --patchbridge-agent-color-text: #e5eaf3;
+    --patchbridge-agent-color-text-subtle: #cbd5e1;
+    --patchbridge-agent-color-text-muted: #94a3b8;
+    --patchbridge-agent-color-border: #31405c;
+    --patchbridge-agent-color-control-border: #45577a;
+    --patchbridge-agent-color-danger: #f87171;
+    --patchbridge-agent-color-danger-hover: #ef4444;
+    --patchbridge-agent-color-danger-background: #450a0a;
+    --patchbridge-agent-color-danger-border: #7f1d1d;
+    --patchbridge-agent-color-warning: #fbbf24;
+    --patchbridge-agent-color-warning-background: #451a03;
+    --patchbridge-agent-color-warning-border: #92400e;
+    --patchbridge-agent-color-reasoning: #a78bfa;
+    --patchbridge-agent-color-reasoning-strong: #c4b5fd;
+    --patchbridge-agent-color-reasoning-background: #2e1065;
+    --patchbridge-agent-color-code-background: #101827;
+    --patchbridge-agent-color-code-block-background: #0b1220;
+    --patchbridge-agent-color-overlay: rgba(10, 15, 28, .92);
+    --patchbridge-agent-color-remove-button: rgba(229, 234, 243, .65);
+    --patchbridge-agent-color-remove-button-hover: rgba(229, 234, 243, .85);
+}
+
+/* 工具块走“静”的路线：更深的底 + 细描边 + 一条 2px 冷蓝左边线，
+ * 与普通气泡仅靠层次区分，不引入发光。 */
+body[data-theme="dark"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border: 1px solid #31405c;
+    border-left: 2px solid #3b82f6;
+    border-radius: 6px;
+    background: #101827;
+}
+body[data-theme="dark"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border: 1px solid #31405c;
+    border-left: 2px solid #3b82f6;
+    border-radius: 6px;
+    background: #101827;
+    padding: 6px 10px;
+}
+
+body[data-theme="dark"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #60a5fa;
+    --patchbridge-agent-tools-background: #1a2333;
+    --patchbridge-agent-tools-card-background: #101827;
+    --patchbridge-agent-tools-border-color: #31405c;
+    --patchbridge-agent-tools-color: #e5eaf3;
+    --patchbridge-agent-tools-muted-color: #94a3b8;
+    --patchbridge-agent-tools-code-background: #0b1220;
+    --patchbridge-agent-tools-empty-background: #101827;
+    --patchbridge-agent-tools-error-color: #fca5a5;
+}
+body[data-theme="dark"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #60a5fa;
+    --patchbridge-agent-trace-background: #1a2333;
+    --patchbridge-agent-trace-card-background: #101827;
+    --patchbridge-agent-trace-border-color: #31405c;
+    --patchbridge-agent-trace-color: #e5eaf3;
+    --patchbridge-agent-trace-muted-color: #94a3b8;
+    --patchbridge-agent-trace-row-background: #0b1220;
+    --patchbridge-agent-trace-detail-background: #0b1220;
+    --patchbridge-agent-trace-empty-background: #101827;
+    --patchbridge-agent-trace-error-color: #fca5a5;
+}

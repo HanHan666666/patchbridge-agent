@@ -1,0 +1,28 @@
+{
+  "name": "@patchbridge-agent/webmcp-adapter",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "可选 WebMCP Adapter：把 document.modelContext 暴露的工具接入 Unified Tool Registry",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/browser.ts --bundle --format=iife --minify --charset=utf8 --outfile=dist/patchbridge-agent-webmcp-adapter.js && node scripts/copy-to-starter.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchbridge-agent/agent": "0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}

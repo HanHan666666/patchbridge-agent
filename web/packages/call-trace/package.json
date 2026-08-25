@@ -1,0 +1,18 @@
+{
+  "name": "@patchbridge-agent/call-trace",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "可插拔只读调用轨迹 Web Component：按执行展示模型调用、Tool 调用、确认交互与耗时/token",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --format=iife --minify --charset=utf8 --outfile=dist/patchbridge-agent-call-trace.js && node scripts/copy-to-starter.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchbridge-agent/agent": "0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}

@@ -1,0 +1,166 @@
+/*
+ * 可选主题：赛博朋克风（基于第三方 cybercore-css 0.3.0，MIT，来源见 vendor/README.md）。
+ *
+ * 分工：cybercore.css 提供色板变量（--cyber-*、--font-*）与标志性特效——
+ * 全页扫描线（body 上的 cyber-scanlines 类）、标题故障字（cyber-glitch）、
+ * AI 面板霓虹流光外框（cyber-neon-border），这些类常驻在页面元素上，
+ * 只在脚本启用该样式表时生效。
+ *
+ * 本文件只做两件事：
+ *   1) 把 --page-* 页面令牌与组件令牌的取值对齐 cybercore 色板——该库的规则
+ *      全部位于 @layer，优先级低于本文件未分层的规则，令牌仍是唯一取值来源；
+ *   2) 为 Shadow DOM 内的 Widget / Inspector 补该库触达不了的 ::part 发光层。
+ * 所有 var(--cyber-*) / var(--font-*) 引用依赖该库已随本主题一起启用（页面脚本保证）。
+ */
+body[data-theme="cyberpunk"] {
+    color-scheme: dark;
+    --page-font-family: var(--font-body);
+    --page-background: var(--cyber-void-500);
+    --page-text: var(--cyber-chrome-100);
+    --page-text-muted: var(--cyber-chrome-400);
+    --page-primary: var(--cyber-cyan-500);
+    --page-topbar-background: var(--cyber-void-300);
+    --page-topbar-color: var(--cyber-chrome-100);
+    --page-topbar-border: 1px solid var(--cyber-cyan-700);
+    --page-link: var(--cyber-cyan-500);
+    --page-link-decoration: none;
+    --page-card-background: var(--cyber-void-400);
+    --page-card-border: 1px solid rgba(0, 240, 255, .28);
+    --page-card-radius: 0;
+    --page-card-shadow: 0 0 18px rgba(255, 42, 109, .2);
+    --page-code-background: var(--cyber-void-200);
+    --page-tab-selected-color: var(--cyber-yellow-500);
+    --page-tab-selected-background: rgba(255, 42, 109, .15);
+    --page-topbar-control-background: var(--cyber-void-300);
+    --page-topbar-control-color: var(--cyber-cyan-500);
+    --page-topbar-control-border: var(--cyber-cyan-700);
+}
+
+body[data-theme="cyberpunk"] .topbar { box-shadow: 0 2px 18px rgba(0, 240, 255, .25); }
+body[data-theme="cyberpunk"] .topbar a:hover { text-shadow: 0 0 8px rgba(0, 240, 255, .9); }
+/* 选中页签电光黄 + 品红内描边（box-shadow 不占布局，避免选中时跳动）。 */
+body[data-theme="cyberpunk"] .tab[aria-selected="true"] { box-shadow: inset 0 0 0 1px rgba(255, 42, 109, .55); }
+
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent {
+    color-scheme: dark;
+    --patchbridge-agent-font-family: var(--font-mono);
+    --patchbridge-agent-color-primary: var(--cyber-cyan-500);
+    --patchbridge-agent-color-primary-hover: var(--cyber-cyan-300);
+    --patchbridge-agent-color-primary-disabled: var(--cyber-cyan-900);
+    --patchbridge-agent-color-on-primary: var(--cyber-void-900);
+    --patchbridge-agent-color-background: var(--cyber-void-500);
+    --patchbridge-agent-color-surface: var(--cyber-void-400);
+    --patchbridge-agent-color-surface-muted: var(--cyber-void-300);
+    --patchbridge-agent-color-surface-hover: var(--cyber-void-200);
+    --patchbridge-agent-color-surface-active: rgba(0, 240, 255, .15);
+    --patchbridge-agent-color-text: var(--cyber-chrome-100);
+    --patchbridge-agent-color-text-subtle: var(--cyber-chrome-200);
+    --patchbridge-agent-color-text-muted: var(--cyber-chrome-400);
+    --patchbridge-agent-color-border: rgba(0, 240, 255, .32);
+    --patchbridge-agent-color-control-border: rgba(0, 240, 255, .55);
+    --patchbridge-agent-color-danger: var(--cyber-magenta-500);
+    --patchbridge-agent-color-danger-hover: var(--cyber-magenta-700);
+    --patchbridge-agent-color-danger-background: rgba(255, 42, 109, .12);
+    --patchbridge-agent-color-danger-border: rgba(255, 42, 109, .5);
+    --patchbridge-agent-color-warning: var(--cyber-yellow-500);
+    --patchbridge-agent-color-warning-background: rgba(252, 238, 10, .08);
+    --patchbridge-agent-color-warning-border: rgba(252, 238, 10, .45);
+    --patchbridge-agent-color-reasoning: var(--cyber-cyan-300);
+    --patchbridge-agent-color-reasoning-strong: var(--cyber-cyan-500);
+    --patchbridge-agent-color-reasoning-background: rgba(0, 240, 255, .07);
+    --patchbridge-agent-color-code-background: rgba(0, 240, 255, .08);
+    --patchbridge-agent-color-code-block-background: var(--cyber-void-900);
+    --patchbridge-agent-color-overlay: rgba(13, 14, 20, .94);
+    --patchbridge-agent-color-header-button-hover: rgba(0, 240, 255, .22);
+    --patchbridge-agent-color-remove-button: rgba(240, 241, 245, .65);
+    --patchbridge-agent-color-remove-button-hover: rgba(240, 241, 245, .85);
+    --patchbridge-agent-radius-sm: 0;
+    --patchbridge-agent-radius-md: 0;
+    --patchbridge-agent-radius-lg: 0;
+    --patchbridge-agent-radius-message: 0;
+    --patchbridge-agent-radius-panel: 0;
+}
+
+/* ::part 发光层：cybercore 的类进不了 Shadow DOM，令牌只能换颜色，
+ * 光晕、渐变和聚焦态在这里按它的色板补齐。 */
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(panel) {
+    border-color: rgba(0, 240, 255, .6);
+    box-shadow:
+        0 0 24px rgba(0, 240, 255, .22),
+        0 0 60px rgba(255, 42, 109, .18),
+        inset 0 0 24px rgba(0, 240, 255, .05);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(header) {
+    background: linear-gradient(90deg, var(--cyber-void-300), var(--cyber-void-200) 55%, var(--cyber-void-100));
+    border-bottom: 1px solid rgba(0, 240, 255, .55);
+    box-shadow: 0 2px 12px rgba(255, 42, 109, .3);
+    color: var(--cyber-chrome-100);
+    text-shadow: 0 0 8px rgba(0, 240, 255, .8);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(composer) {
+    border-top: 1px solid rgba(255, 42, 109, .5);
+    background: rgba(24, 26, 37, .6);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(input) {
+    background: var(--cyber-void-900);
+    border-color: rgba(0, 240, 255, .55);
+    box-shadow: inset 0 0 10px rgba(0, 240, 255, .12);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(input):focus {
+    border-color: var(--cyber-cyan-500);
+    box-shadow: inset 0 0 14px rgba(0, 240, 255, .25), 0 0 10px rgba(0, 240, 255, .35);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(send-button) {
+    background: linear-gradient(180deg, var(--cyber-cyan-500), var(--cyber-cyan-600));
+    color: var(--cyber-void-900);
+    font-weight: 700;
+    text-transform: uppercase;
+    box-shadow: 0 0 14px rgba(0, 240, 255, .55);
+}
+/* 用户气泡品红系、助手气泡青色系：双色对话流是本主题最强的识别特征。 */
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(user-message) {
+    border: 1px solid rgba(255, 42, 109, .45);
+    box-shadow: 0 0 12px rgba(255, 42, 109, .15), inset 0 0 18px rgba(255, 42, 109, .05);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(assistant-message) {
+    border: 1px solid rgba(0, 240, 255, .35);
+    box-shadow: 0 0 12px rgba(0, 240, 255, .12);
+}
+/* 工具块延续双色语言：调用=青、结果=品红，终端感等宽字配虚线“数据流”描边。 */
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border: 1px dashed rgba(0, 240, 255, .6);
+    background: rgba(0, 240, 255, .06);
+    box-shadow: 0 0 10px rgba(0, 240, 255, .25);
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border: 1px dashed rgba(255, 42, 109, .6);
+    background: rgba(255, 42, 109, .05);
+    box-shadow: 0 0 10px rgba(255, 42, 109, .22);
+    padding: 6px 10px;
+}
+
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: var(--cyber-magenta-500);
+    --patchbridge-agent-tools-background: var(--cyber-void-500);
+    --patchbridge-agent-tools-card-background: var(--cyber-void-400);
+    --patchbridge-agent-tools-border-color: rgba(0, 240, 255, .32);
+    --patchbridge-agent-tools-color: var(--cyber-chrome-100);
+    --patchbridge-agent-tools-muted-color: var(--cyber-chrome-400);
+    --patchbridge-agent-tools-code-background: var(--cyber-void-900);
+    --patchbridge-agent-tools-empty-background: var(--cyber-void-300);
+    --patchbridge-agent-tools-error-color: var(--cyber-magenta-500);
+    --patchbridge-agent-tools-radius: 0;
+}
+body[data-theme="cyberpunk"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: var(--cyber-magenta-500);
+    --patchbridge-agent-trace-background: var(--cyber-void-500);
+    --patchbridge-agent-trace-card-background: var(--cyber-void-400);
+    --patchbridge-agent-trace-border-color: rgba(0, 240, 255, .32);
+    --patchbridge-agent-trace-color: var(--cyber-chrome-100);
+    --patchbridge-agent-trace-muted-color: var(--cyber-chrome-400);
+    --patchbridge-agent-trace-row-background: var(--cyber-void-900);
+    --patchbridge-agent-trace-detail-background: var(--cyber-void-900);
+    --patchbridge-agent-trace-empty-background: var(--cyber-void-300);
+    --patchbridge-agent-trace-error-color: var(--cyber-magenta-500);
+    --patchbridge-agent-trace-radius: 0;
+}

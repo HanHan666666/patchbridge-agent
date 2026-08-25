@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "text-reasoning-end-turn",
+      "events": [
+        {
+          "type": "block-start",
+          "index": 0,
+          "block": {
+            "type": "reasoning"
+          }
+        },
+        {
+          "type": "block-delta",
+          "index": 0,
+          "delta": {
+            "type": "reasoning",
+            "text": "先分析"
+          }
+        },
+        {
+          "type": "block-stop",
+          "index": 0
+        },
+        {
+          "type": "block-start",
+          "index": 1,
+          "block": {
+            "type": "text"
+          }
+        },
+        {
+          "type": "block-delta",
+          "index": 1,
+          "delta": {
+            "type": "text",
+            "text": "答案"
+          }
+        },
+        {
+          "type": "block-delta",
+          "index": 1,
+          "delta": {
+            "type": "text",
+            "text": "完成"
+          }
+        },
+        {
+          "type": "block-stop",
+          "index": 1
+        },
+        {
+          "type": "message-stop",
+          "stopReason": "end-turn",
+          "usage": {
+            "inputTokens": 7,
+            "outputTokens": 4,
+            "totalTokens": 11
+          },
+          "modelState": null
+        }
+      ]
+    },
+    {
+      "id": "fragmented-tool-use",
+      "events": [
+        {
+          "type": "block-start",
+          "index": 0,
+          "block": {
+            "type": "tool-call",
+            "callId": "call-1",
+            "name": "local.echo"
+          }
+        },
+        {
+          "type": "block-delta",
+          "index": 0,
+          "delta": {
+            "type": "tool-call",
+            "argumentsDelta": "{\"serial"
+          }
+        },
+        {
+          "type": "block-delta",
+          "index": 0,
+          "delta": {
+            "type": "tool-call",
+            "argumentsDelta": "\":\"DEV-1\"}"
+          }
+        },
+        {
+          "type": "block-stop",
+          "index": 0
+        },
+        {
+          "type": "message-stop",
+          "stopReason": "tool-use",
+          "usage": null,
+          "modelState": null
+        }
+      ]
+    }
+  ]
+}

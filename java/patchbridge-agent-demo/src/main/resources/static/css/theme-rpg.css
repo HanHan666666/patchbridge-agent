@@ -1,0 +1,153 @@
+/*
+ * 可选主题：奇幻 RPG 风（基于第三方 RPGUI，zlib 许可，来源与用法见 vendor/README.md）。
+ *
+ * 分工：RPGUI 提供素材——侧栏卡片直接挂它的 framed-golden 容器类（金色浮雕
+ * 边框 + 羊皮纸底，类常驻在元素上、随样式表启停生效），页面与组件的其余视觉
+ * 由令牌按它的设计语言取值：石头灰面板、金色强调、链接亮黄。
+ * 组件在 Shadow DOM 内用不了它的类：::part(panel) 复用它的 border-image 素材
+ * 让 AI 面板获得同款金色浮雕框，头部复刻它的"白字四向黑描边"标题风格。
+ * 像素字体 Press Start 2P 由 vendor/press-start-2p.css 提供（与 NES 主题共用）。
+ */
+body[data-theme="rpg"] {
+    color-scheme: dark;
+    --page-font-family: "Press Start 2P", "Microsoft YaHei", monospace;
+    --page-background: #2e2b31;
+    --page-text: #ffffff;
+    --page-text-muted: #b8b2ac;
+    --page-primary: #f5c542;
+    --page-topbar-background: #3b3640;
+    --page-topbar-color: #ffffff;
+    --page-topbar-border: none;
+    --page-link: #ffff00;
+    --page-link-decoration: none;
+    /* 卡片底色与边框交给 framed-golden 容器类（其选择器优先级高于 .card 的令牌引用），
+     * 这里只关掉与浮雕框冲突的投影并压平圆角。 */
+    --page-card-shadow: none;
+    --page-card-radius: 0;
+    --page-code-background: #3a373d;
+    --page-tab-selected-color: #3a2a05;
+    --page-tab-selected-background: #f5c542;
+    --page-topbar-control-background: #4e4a4e;
+    --page-topbar-control-color: #ffffff;
+    --page-topbar-control-border: #6e6a70;
+}
+
+/* RPGUI 的指针素材：常规/可点击两种光标，最直观的"游戏感"。 */
+body[data-theme="rpg"] { cursor: url("vendor/rpgui/img/cursor/default.png"), auto; }
+body[data-theme="rpg"] a,
+body[data-theme="rpg"] .tab,
+body[data-theme="rpg"] select { cursor: url("vendor/rpgui/img/cursor/point.png") 10 0, auto; }
+
+/* 标题按 RPGUI 的 h1 风格做四向黑描边（cyber-glitch 类在非赛博朋克主题下不生效）。 */
+body[data-theme="rpg"] .topbar h1 { text-shadow: -2px 0 #000, 0 2px #000, 2px 0 #000, 0 -2px #000; }
+
+/* RPGUI 的 .rpgui-container 基类为游戏全屏布局设计（position: fixed），
+ * 卡片在文档流中，必须还原为 static。 */
+body[data-theme="rpg"] .card { position: static; }
+
+body[data-theme="rpg"] .tab-panel patchbridge-agent {
+    --patchbridge-agent-font-family: "Press Start 2P", "Microsoft YaHei", monospace;
+    --patchbridge-agent-font-size: 11px;
+    --patchbridge-agent-font-size-small: 9px;
+    --patchbridge-agent-font-size-caption: 11px;
+    --patchbridge-agent-font-size-title: 13px;
+    --patchbridge-agent-font-size-large: 14px;
+    --patchbridge-agent-color-primary: #f5c542;
+    --patchbridge-agent-color-primary-hover: #ffd76a;
+    --patchbridge-agent-color-primary-disabled: #8a7a4a;
+    --patchbridge-agent-color-on-primary: #3a2a05;
+    --patchbridge-agent-color-background: #4e4a4e;
+    --patchbridge-agent-color-surface: #413e44;
+    --patchbridge-agent-color-surface-muted: #3b383e;
+    --patchbridge-agent-color-surface-hover: #5a555c;
+    --patchbridge-agent-color-surface-active: rgba(245, 197, 66, .25);
+    --patchbridge-agent-color-text: #ffffff;
+    --patchbridge-agent-color-text-subtle: #e8e4e0;
+    --patchbridge-agent-color-text-muted: #b8b2ac;
+    --patchbridge-agent-color-border: #2e2b31;
+    --patchbridge-agent-color-control-border: #6e6a70;
+    --patchbridge-agent-color-danger: #ff6b6b;
+    --patchbridge-agent-color-danger-hover: #ff8787;
+    --patchbridge-agent-color-danger-background: rgba(255, 107, 107, .15);
+    --patchbridge-agent-color-danger-border: #ff6b6b;
+    --patchbridge-agent-color-warning: #f0ad4e;
+    --patchbridge-agent-color-warning-background: rgba(240, 173, 78, .15);
+    --patchbridge-agent-color-warning-border: #f0ad4e;
+    --patchbridge-agent-color-reasoning: #a78bfa;
+    --patchbridge-agent-color-reasoning-strong: #c4b5fd;
+    --patchbridge-agent-color-reasoning-background: rgba(167, 139, 250, .12);
+    --patchbridge-agent-color-code-background: #3a373d;
+    --patchbridge-agent-color-code-block-background: #33303a;
+    --patchbridge-agent-color-overlay: rgba(46, 43, 49, .92);
+    --patchbridge-agent-color-header-button-hover: rgba(255, 255, 255, .16);
+    --patchbridge-agent-color-remove-button: rgba(255, 255, 255, .6);
+    --patchbridge-agent-color-remove-button-hover: rgba(255, 255, 255, .85);
+    --patchbridge-agent-radius-sm: 0;
+    --patchbridge-agent-radius-md: 0;
+    --patchbridge-agent-radius-lg: 0;
+    --patchbridge-agent-radius-message: 0;
+    --patchbridge-agent-radius-panel: 0;
+}
+
+/*
+ * ::part 层：RPGUI 的类进不了 Shadow DOM。面板直接复用它的 border-image /
+ * 背景素材（url 相对本文件位于 /css/，指向 vendor/rpgui/img/），声明与库内
+ * framed-golden 容器保持一致；头部与助手气泡复刻其白字黑描边风格。
+ */
+body[data-theme="rpg"] .tab-panel patchbridge-agent::part(panel) {
+    border-style: solid;
+    border-width: 15px;
+    border-image-source: url("vendor/rpgui/img/border-image-golden.png");
+    border-image-slice: 4 4 4 4;
+    border-image-repeat: repeat;
+    border-image-width: 18px;
+    background: url("vendor/rpgui/img/background-image-golden.png") center;
+    background-clip: padding-box;
+    background-origin: padding-box;
+    box-shadow: none;
+}
+body[data-theme="rpg"] .tab-panel patchbridge-agent::part(header) {
+    background: #3b3640;
+    color: #ffffff;
+    text-shadow: -2px 0 #000, 0 2px #000, 2px 0 #000, 0 -2px #000;
+}
+body[data-theme="rpg"] .tab-panel patchbridge-agent::part(assistant-message) {
+    text-shadow: -1px 0 #000, 0 1px #000, 1px 0 #000, 0 -1px #000;
+}
+
+/* 工具块做成"系统公告条"：压暗的石头底 + 金色左边条，与金色强调一致。 */
+body[data-theme="rpg"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border-left: 3px solid #f5c542;
+    background: rgba(0, 0, 0, .3);
+}
+body[data-theme="rpg"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border-left: 3px solid #ffd76a;
+    background: rgba(0, 0, 0, .22);
+    padding: 4px 8px;
+}
+
+body[data-theme="rpg"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #f5c542;
+    --patchbridge-agent-tools-background: #4e4a4e;
+    --patchbridge-agent-tools-card-background: #413e44;
+    --patchbridge-agent-tools-border-color: #6e6a70;
+    --patchbridge-agent-tools-color: #ffffff;
+    --patchbridge-agent-tools-muted-color: #b8b2ac;
+    --patchbridge-agent-tools-code-background: #33303a;
+    --patchbridge-agent-tools-empty-background: #413e44;
+    --patchbridge-agent-tools-error-color: #ff6b6b;
+    --patchbridge-agent-tools-radius: 0;
+}
+body[data-theme="rpg"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #f5c542;
+    --patchbridge-agent-trace-background: #4e4a4e;
+    --patchbridge-agent-trace-card-background: #413e44;
+    --patchbridge-agent-trace-border-color: #6e6a70;
+    --patchbridge-agent-trace-color: #ffffff;
+    --patchbridge-agent-trace-muted-color: #b8b2ac;
+    --patchbridge-agent-trace-row-background: #33303a;
+    --patchbridge-agent-trace-detail-background: #33303a;
+    --patchbridge-agent-trace-empty-background: #413e44;
+    --patchbridge-agent-trace-error-color: #ff6b6b;
+    --patchbridge-agent-trace-radius: 0;
+}

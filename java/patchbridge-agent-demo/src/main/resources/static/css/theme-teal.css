@@ -1,0 +1,77 @@
+/*
+ * 可选主题：青绿科技风。
+ * 特色是“圆润清新”——与深蓝企业风的方正拉开差异：面板与卡片大圆角、
+ * 胶囊形发送按钮（::part 覆盖）、渐变青绿顶栏、柔和的绿色投影。
+ */
+body[data-theme="teal"] {
+    --page-primary: #00695c;
+    --page-topbar-background: linear-gradient(135deg, #00695c, #028374);
+    --page-link: #b7e3dc;
+    --page-background: #eef6f3;
+    --page-text: #10201d;
+    --page-text-muted: #4b5f58;
+    --page-card-radius: 16px;
+    --page-card-shadow: 0 4px 14px rgba(0, 105, 92, .14);
+    --page-code-background: #e6f2ee;
+    --page-tab-selected-color: #00695c;
+    --page-tab-selected-background: #d3ece6;
+    --page-topbar-control-background: rgba(255, 255, 255, .2);
+    --page-topbar-control-color: #ffffff;
+    --page-topbar-control-border: rgba(255, 255, 255, .55);
+}
+
+body[data-theme="teal"] .tab-panel patchbridge-agent {
+    --patchbridge-agent-color-primary: #00695c;
+    --patchbridge-agent-color-primary-hover: #004d40;
+    --patchbridge-agent-color-background: #fcfffe;
+    --patchbridge-agent-color-surface: #f2faf7;
+    --patchbridge-agent-color-surface-muted: #ecf5f1;
+    --patchbridge-agent-color-surface-hover: #e2f3ee;
+    --patchbridge-agent-color-surface-active: #c9e8e0;
+    --patchbridge-agent-color-text: #10201d;
+    --patchbridge-agent-color-text-subtle: #2c403b;
+    --patchbridge-agent-color-text-muted: #52655e;
+    --patchbridge-agent-color-border: #d3e6df;
+    --patchbridge-agent-color-control-border: #b9d4ca;
+    --patchbridge-agent-color-code-background: #e2efe9;
+    --patchbridge-agent-color-code-block-background: #eef7f3;
+    --patchbridge-agent-radius-sm: 8px;
+    --patchbridge-agent-radius-md: 10px;
+    --patchbridge-agent-radius-lg: 12px;
+    --patchbridge-agent-radius-message: 14px;
+    --patchbridge-agent-radius-panel: 18px;
+}
+/* 胶囊发送按钮与更圆的输入框：超出令牌表达力的形状差异走 ::part 层。 */
+body[data-theme="teal"] .tab-panel patchbridge-agent::part(send-button) { border-radius: 999px; }
+body[data-theme="teal"] .tab-panel patchbridge-agent::part(input) { border-radius: 12px; }
+/* 工具块沿用“圆润清新”语言：浅青底 + 圆角 + 虚线描边，暗示“过程性内容”。 */
+body[data-theme="teal"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border: 1px dashed #7fc0b2;
+    border-radius: 14px;
+    background: #e9f6f1;
+}
+body[data-theme="teal"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border: 1px dashed #b9d4ca;
+    border-radius: 12px;
+    background: #f2faf7;
+    padding: 6px 10px;
+}
+
+body[data-theme="teal"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #00695c;
+    --patchbridge-agent-tools-background: #fcfffe;
+    --patchbridge-agent-tools-card-background: #f2faf7;
+    --patchbridge-agent-tools-border-color: #d3e6df;
+    --patchbridge-agent-tools-code-background: #ecf5f1;
+    --patchbridge-agent-tools-empty-background: #f2faf7;
+    --patchbridge-agent-tools-radius: 12px;
+}
+body[data-theme="teal"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #00695c;
+    --patchbridge-agent-trace-background: #fcfffe;
+    --patchbridge-agent-trace-card-background: #f2faf7;
+    --patchbridge-agent-trace-border-color: #d3e6df;
+    --patchbridge-agent-trace-detail-background: #ecf5f1;
+    --patchbridge-agent-trace-empty-background: #f2faf7;
+    --patchbridge-agent-trace-radius: 12px;
+}

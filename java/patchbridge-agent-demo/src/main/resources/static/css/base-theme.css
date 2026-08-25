@@ -1,0 +1,57 @@
+/*
+ * 默认主题（深蓝企业风）：页面外壳令牌取值 + AI 组件的基础覆盖。
+ *
+ * 主题机制：所有主题差异只通过 body[data-theme] 选择器整组切换令牌实现，
+ * layout.css 只引用令牌、不定义取值。组件令牌必须由“直接命中组件元素”的
+ * 选择器提供——只设在祖先上会被 Shadow DOM 内 :host 的默认值压住
+ * （元素自身声明的优先级高于继承）。
+ *
+ * 深蓝企业风是默认主题，不依赖 data-theme 属性，取值直接写在基础规则上；
+ * 其余主题整组覆盖，见同目录 theme-*.css。
+ */
+body {
+    color-scheme: light;
+    --page-font-family: "Microsoft YaHei", system-ui, sans-serif;
+    --page-background: #f0f2f5;
+    --page-text: #1f2329;
+    --page-text-muted: #4e5969;
+    --page-primary: #1e3a8a;
+    --page-topbar-background: #1e3a8a;
+    --page-topbar-color: #ffffff;
+    --page-topbar-border: none;
+    --page-link: #bfdbfe;
+    --page-link-decoration: none;
+    --page-card-background: #ffffff;
+    --page-card-border: none;
+    --page-card-radius: 10px;
+    --page-card-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+    --page-code-background: #f2f3f5;
+    --page-tab-selected-color: #1e3a8a;
+    --page-tab-selected-background: #dbeafe;
+    --page-topbar-control-background: rgba(255, 255, 255, .16);
+    --page-topbar-control-color: #ffffff;
+    --page-topbar-control-border: rgba(255, 255, 255, .45);
+}
+
+/*
+ * Widget、Inspector 与 Call Trace：覆盖参考主题主色；Call Trace 还显式固定本主题
+ * 的浅色表面，避免操作系统暗色偏好覆盖宿主已选择的深蓝企业主题。
+ * ::part(panel) 阴影引用页面卡片阴影令牌，
+ * 使组件面板与页面卡片的投影风格始终一致。
+ */
+.tab-panel patchbridge-agent { display: block; height: 100%; --patchbridge-agent-color-primary: #1e3a8a; --patchbridge-agent-radius-panel: 10px; }
+.tab-panel patchbridge-agent::part(panel) { box-shadow: var(--page-card-shadow); }
+.tab-panel patchbridge-agent-tool-inspector { display: block; height: 100%; --patchbridge-agent-tools-accent-color: #1e3a8a; }
+.tab-panel patchbridge-agent-call-trace {
+    display: block;
+    height: 100%;
+    --patchbridge-agent-trace-accent-color: #1e3a8a;
+    --patchbridge-agent-trace-background: #ffffff;
+    --patchbridge-agent-trace-card-background: #ffffff;
+    --patchbridge-agent-trace-border-color: #e4e7ec;
+    --patchbridge-agent-trace-color: #1f2329;
+    --patchbridge-agent-trace-muted-color: #667085;
+    --patchbridge-agent-trace-row-background: #f8fafc;
+    --patchbridge-agent-trace-detail-background: #f2f4f7;
+    --patchbridge-agent-trace-empty-background: #f8fafc;
+}

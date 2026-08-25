@@ -1,0 +1,22 @@
+{
+  "name": "patchbridge-agent-web",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "workspaces": [
+    "packages/agent",
+    "packages/widget",
+    "packages/webmcp-adapter",
+    "packages/tool-inspector",
+    "packages/call-trace"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/agent && npm run build -w packages/webmcp-adapter && npm run build -w packages/widget && npm run build -w packages/tool-inspector && npm run build -w packages/call-trace",
+    "pretest": "npm run build -w packages/agent",
+    "test": "npm run test -w packages/agent && npm run test -w packages/webmcp-adapter && npm run test -w packages/widget && npm run test -w packages/tool-inspector && npm run test -w packages/call-trace"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^3.2.4"
+  }
+}

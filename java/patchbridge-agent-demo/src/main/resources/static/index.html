@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<!--
+  Demo 首页：模拟存量企业系统的业务页面。
+  默认聊天能力只需加载 /ai/assets/patchbridge-agent.js 并放置 <patchbridge-agent>。
+  本 Demo 额外加载可选 Inspector、Call Trace 与 WebMCP Adapter，用于演示可插拔扩展。
+  布局采用平铺形态：AI 助手作为页面主体区域直接展示（组件填满宿主容器）。
+  顶栏可实时切换 8 种主题：组件侧全部由宿主 CSS Variables 与 ::part 完成，组件零改动。
+  样式拆分在 css/ 目录：layout.css 是布局骨架，base-theme.css 是默认主题，theme-*.css 每主题一个文件；
+  赛博朋克 / NES / RPG 三个主题的页面特效与素材来自 vendor/ 下的第三方库（cybercore-css / NES.css / RPGUI），
+  各自仅在选中对应主题时启用。
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备管理平台 - PatchBridge Agent Demo</title>
+    <link rel="stylesheet" href="/css/layout.css">
+    <!-- 默认主题（深蓝企业）必须最先加载，可选主题按 data-theme 整组覆盖。 -->
+    <link rel="stylesheet" href="/css/base-theme.css">
+    <link rel="stylesheet" href="/css/theme-teal.css">
+    <link rel="stylesheet" href="/css/theme-dark.css">
+    <link rel="stylesheet" href="/css/theme-contrast.css">
+    <link rel="stylesheet" href="/css/theme-cyberpunk.css">
+    <link rel="stylesheet" href="/css/theme-win98.css">
+    <link rel="stylesheet" href="/css/theme-rpg.css">
+    <link rel="stylesheet" href="/css/theme-nes.css">
+    <!-- 按需启用的第三方主题库（详见各主题文件与 vendor/README.md）：均带全局样式
+         （reset/base/typography），常驻 disabled，仅在对应主题激活时由页面脚本启用，
+         避免影响其他主题。Press Start 2P 像素字体为 NES / RPG 主题共用，
+         未使用该字体族时浏览器不会下载文件，可常驻加载。 -->
+    <link rel="stylesheet" href="/css/vendor/press-start-2p.css">
+    <link id="cybercore-css" rel="stylesheet" href="/css/vendor/cybercore.css" disabled>
+    <link id="nes-css" rel="stylesheet" href="/css/vendor/nes.css" disabled>
+    <link id="rpgui-css" rel="stylesheet" href="/css/vendor/rpgui/rpgui.min.css" disabled>
+</head>
+<body class="cyber-scanlines cyber-scanlines--fine">
+<!-- cyber-* 类是 cybercore-css 的特效类（全页扫描线等），只在赛博朋克主题启用该库时生效。 -->
+<div class="topbar">
+    <h1 class="cyber-glitch" data-text="设备管理平台（存量系统模拟）">设备管理平台（存量系统模拟）</h1>
+    <div class="topbar-actions">
+        <label class="theme-switch">主题
+            <select id="theme-select">
+                <option value="blue">深蓝企业</option>
+                <option value="teal">青绿科技</option>
+                <option value="dark">暗色</option>
+                <option value="contrast">高对比度</option>
+                <option value="cyberpunk">赛博朋克</option>
+                <option value="win98">Win98 复古</option>
+                <option value="rpg">奇幻 RPG</option>
+                <option value="nes">NES 像素</option>
+            </select>
+        </label>
+        <a href="/" onclick="if(confirm('退出登录？')){fetch('/logout',{method:'POST'});setTimeout(()=>location.reload(),300);}return false;">退出登录</a>
+        <a href="/ai-admin/" target="_blank">管理后台（ADMIN / AUDITOR）</a>
+    </div>
+</div>
+
+<div class="layout">
+    <!-- rpgui-container framed-golden / nes-container 是第三方主题库的容器类：
+         常驻在元素上，仅在对应主题启用其样式表时生效（金色浮雕卡片 / 像素黑框卡片）。 -->
+    <aside class="side">
+        <div class="card hint rpgui-container framed-golden nes-container">
+            <h2>右侧即浏览器 AI 助手</h2>
+            <p>Agent Runtime 就运行在这个页面里，直接用自然语言查询与操作设备。</p>
+            <p>试试：<code>看看注塑车间有哪些设备和告警</code>、<code>重启 100000000001</code>（会弹确认）。</p>
+        </div>
+        <div class="card rpgui-container framed-golden nes-container">
+            <h2>演示账号（不同权限看到不同的 Tool）</h2>
+            <p>admin / admin123 —— 全部权限（含重启、MCP、审计）</p>
+            <p>operator / op123456 —— 可查询、可重启设备，无运维 MCP 权限</p>
+            <p>user / user123456 —— 只读查询</p>
+            <p>auditor / auditor123 —— 仅聊天与管理后台审计</p>
+        </div>
+        <div class="card rpgui-container framed-golden nes-container">
+            <h2>本页演示的架构要点</h2>
+            <p>Agent Runtime 运行在浏览器；默认 Widget 只需一个 JS，本 Demo 额外按需加载 Inspector、Call Trace 与 WebMCP Adapter。</p>
+            <p>Tool 调用走现有登录态，权限由服务端 RBAC 决定。</p>
+            <p>远程 MCP Tool 由后端网关代理，凭据不出服务端。首启空库会自动预置麦当劳 MCP 示例（<code>mcd</code> / <code>https://mcp.mcd.cn</code>，未配凭据、默认停用）：在<a href="/ai-admin/" target="_blank">管理后台</a> → MCP 管理编辑 <code>mcd</code>，认证类型选 <code>bearer</code>、凭据 JSON 填 <code>{"token":"你的令牌"}</code>，保存后启用即可体验真实远程 Tool。</p>
+            <p><code>frontend.device_search</code> 直接复用 <code>/demo-api/devices</code>，不经过 <code>/ai/tools/call</code>。</p>
+            <p>附件、思考、正文和 Tool 交互按 ContentBlock 渲染；刷新页面可验证消息与 ModelState 同 revision 恢复。</p>
+            <p>Runtime 扩展：<span id="runtime-status" class="capability-status">等待第一次模型调用…</span></p>
+            <p>WebMCP：<span id="webmcp-status" class="capability-status">等待 Agent 初始化…</span></p>
+        </div>
+        <div class="card rpgui-container framed-golden nes-container">
+            <h2>样式定制演示</h2>
+            <p>顶栏“主题”可实时切换 8 种风格：深蓝企业、青绿科技、暗色、高对比度、赛博朋克、Win98 复古、奇幻 RPG、NES 像素。</p>
+            <p>组件侧只通过 <code>--patchbridge-agent-*</code> CSS Variables 与 <code>::part</code> 覆盖实现，不修改组件任何内部样式，切换即时生效。</p>
+            <p>赛博朋克 / NES / RPG 的页面特效与素材（扫描线、故障字、霓虹边框、金色浮雕框、像素按钮）来自 <code>vendor/</code> 下的第三方库，仅在对应主题激活时加载。</p>
+        </div>
+    </aside>
+
+    <main class="agent-area">
+        <div class="agent-shell">
+            <div class="tabs" role="tablist" aria-label="Agent Demo 视图">
+                <!-- nes-btn：NES.css 像素按钮（仅 NES 主题生效），选中态仍由页面令牌驱动。 -->
+                <button id="chat-tab" class="tab nes-btn" type="button" role="tab"
+                        aria-selected="true" aria-controls="chat-panel">聊天</button>
+                <button id="tools-tab" class="tab nes-btn" type="button" role="tab"
+                        aria-selected="false" aria-controls="tools-panel" tabindex="-1">Tools 调试</button>
+                <button id="trace-tab" class="tab nes-btn" type="button" role="tab"
+                        aria-selected="false" aria-controls="trace-panel" tabindex="-1">调用轨迹</button>
+            </div>
+            <!-- cyber-neon-border：AI 面板外的霓虹流光外框（cybercore-css 特效，仅赛博朋克主题生效）。 -->
+            <section id="chat-panel" class="tab-panel cyber-neon-border" role="tabpanel" aria-labelledby="chat-tab">
+                <!-- Demo 显式开启调用轨迹采集（persistent）；生产页面保持缺省（不采集）。 -->
+                <patchbridge-agent endpoint="/ai" title="设备 AI 助手" call-trace="persistent"></patchbridge-agent>
+            </section>
+            <section id="tools-panel" class="tab-panel cyber-neon-border" role="tabpanel"
+                     aria-labelledby="tools-tab" hidden>
+                <patchbridge-agent-tool-inspector id="tool-inspector"></patchbridge-agent-tool-inspector>
+            </section>
+            <section id="trace-panel" class="tab-panel cyber-neon-border" role="tabpanel"
+                     aria-labelledby="trace-tab" hidden>
+                <patchbridge-agent-call-trace id="call-trace"></patchbridge-agent-call-trace>
+            </section>
+        </div>
+    </main>
+</div>
+
+<!-- Inspector、Call Trace 与 WebMCP Adapter 均为可选分包；生产只加载默认 Widget 即可。 -->
+<script src="/ai/assets/patchbridge-agent-tool-inspector.js"></script>
+<script src="/ai/assets/patchbridge-agent-call-trace.js"></script>
+<script src="/ai/assets/patchbridge-agent-webmcp-adapter.js"></script>
+<script>
+    /* Tab 只切换三个可拔插视图，不进入 Agent / Inspector / Call Trace 的内部状态。 */
+    const tabPairs = [
+        [document.getElementById('chat-tab'), document.getElementById('chat-panel')],
+        [document.getElementById('tools-tab'), document.getElementById('tools-panel')],
+        [document.getElementById('trace-tab'), document.getElementById('trace-panel')]
+    ];
+    function activateTab(activeTab) {
+        for (const [tab, panel] of tabPairs) {
+            const active = tab === activeTab;
+            tab.setAttribute('aria-selected', String(active));
+            tab.tabIndex = active ? 0 : -1;
+            panel.hidden = !active;
+        }
+    }
+    for (const [tab] of tabPairs) {
+        tab.addEventListener('click', () => activateTab(tab));
+        tab.addEventListener('keydown', event => {
+            const currentIndex = tabPairs.findIndex(([candidate]) => candidate === tab);
+            let targetIndex = null;
+            if (event.key === 'ArrowRight') {
+                targetIndex = (currentIndex + 1) % tabPairs.length;
+            } else if (event.key === 'ArrowLeft') {
+                targetIndex = (currentIndex - 1 + tabPairs.length) % tabPairs.length;
+            } else if (event.key === 'Home') {
+                targetIndex = 0;
+            } else if (event.key === 'End') {
+                targetIndex = tabPairs.length - 1;
+            }
+            if (targetIndex == null) {
+                return;
+            }
+            event.preventDefault();
+            const [targetTab] = tabPairs[targetIndex];
+            activateTab(targetTab);
+            targetTab.focus();
+        });
+    }
+
+    /*
+     * 主题切换 Demo：所有主题差异都由宿主 CSS 的 body[data-theme] 规则表达，
+     * 这里只负责切换属性与记忆选择；组件令牌直接命中元素，改完立即生效。
+     * 脚本在 body 内同步执行，先应用记忆的主题再首帧渲染，避免默认主题闪一下。
+     * 赛博朋克 / NES / RPG 三个主题各依赖一个第三方库（都带全局 reset/base），
+     * 样式表必须互斥启停，由 themeStylesheets 映射统一驱动。
+     */
+    const themeKeys = ['blue', 'teal', 'dark', 'contrast', 'cyberpunk', 'win98', 'rpg', 'nes'];
+    const themeSelect = document.getElementById('theme-select');
+    const themeStylesheets = {
+        cyberpunk: document.getElementById('cybercore-css'),
+        rpg: document.getElementById('rpgui-css'),
+        nes: document.getElementById('nes-css')
+    };
+    function applyTheme(theme) {
+        document.body.dataset.theme = theme;
+        for (const [key, link] of Object.entries(themeStylesheets)) {
+            link.disabled = key !== theme;
+        }
+    }
+    const savedTheme = localStorage.getItem('demo-theme');
+    themeSelect.value = themeKeys.includes(savedTheme) ? savedTheme : 'blue';
+    applyTheme(themeSelect.value);
+    themeSelect.addEventListener('change', () => {
+        applyTheme(themeSelect.value);
+        localStorage.setItem('demo-theme', themeSelect.value);
+    });
+
+    let frontendToolRegistration = null;
+    let webMcpAdapter = null;
+    let webMcpDemoToolAbort = null;
+    let readyGeneration = 0;
+    const runtimeMetrics = { modelCalls: 0, toolCalls: 0, lifecycle: '尚未执行' };
+    const runtimeStatus = document.getElementById('runtime-status');
+    const demoAgent = document.querySelector('patchbridge-agent');
+
+    /** 把 Hook 与 Interceptor 的真实触发次数展示在业务页面，不进入 Widget 内部。 */
+    function renderRuntimeMetrics() {
+        runtimeStatus.textContent = `${runtimeMetrics.lifecycle} · Model ${runtimeMetrics.modelCalls} · Tool ${runtimeMetrics.toolCalls}`;
+    }
+
+    /*
+     * Runtime 扩展 Demo：属性在 Widget bundle 加载前注入，Custom Element 升级时会恢复。
+     * Hook 只观察稳定事实；Interceptor 包围调用并继续交给唯一 next，不改变业务结果。
+    */
+    demoAgent.runtimeOptions = {
+        limits: { maxModelCalls: 8 },
+        hooks: [{
+            onEvent: event => {
+                runtimeMetrics.lifecycle = event.type;
+                renderRuntimeMetrics();
+            }
+        }],
+        modelInterceptors: [{
+            intercept: async function* (request, context, signal, next) {
+                runtimeMetrics.modelCalls += 1;
+                renderRuntimeMetrics();
+                for await (const event of next(request, context, signal)) {
+                    yield event;
+                }
+            }
+        }],
+        toolInterceptors: [{
+            intercept: async (invocation, next) => {
+                runtimeMetrics.toolCalls += 1;
+                renderRuntimeMetrics();
+                return next(invocation);
+            }
+        }]
+    };
+    renderRuntimeMetrics();
+
+    /* 每次 Widget 重建都会收到新 Controller 能力：可选视图只绑定本次 ready 的实例。 */
+    document.addEventListener('patchbridge-agent-ready', async event => {
+        const generation = ++readyGeneration;
+        const agent = event.target;
+        const registry = event.detail.toolRegistry;
+        const inspector = document.getElementById('tool-inspector');
+        const callTrace = document.getElementById('call-trace');
+        const webMcpStatus = document.getElementById('webmcp-status');
+
+        frontendToolRegistration?.dispose();
+        frontendToolRegistration = agent.registerTool({
+            name: 'frontend.device_search',
+            title: '前端设备查询',
+            description: '复用当前企业页面已有的设备查询 HTTP 接口，按关键字返回设备列表',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    keyword: { type: 'string', description: '设备序列号、名称或车间关键字；省略时返回全部' }
+                },
+                additionalProperties: false
+            },
+            annotations: {
+                readOnlyHint: true,
+                destructiveHint: false,
+                idempotentHint: true,
+                requireConfirmation: false
+            },
+            execute: async (arguments_, context) => {
+                /* 参数类型由 Registry 在执行边界按 inputSchema 强制校验，这里不再重复检查。 */
+                const keyword = arguments_.keyword;
+                const query = new URLSearchParams();
+                if (keyword) {
+                    query.set('keyword', keyword);
+                }
+                const response = await fetch(`/demo-api/devices?${query}`, {
+                    credentials: 'same-origin',
+                    signal: context.signal
+                });
+                if (!response.ok) {
+                    throw new Error(`设备接口调用失败：HTTP ${response.status}`);
+                }
+                return response.json();
+            }
+        });
+
+        /* Inspector 与 Call Trace 都读取当前 Controller 的唯一数据源。 */
+        inspector.toolSource = event.detail.toolInspectionSource;
+        callTrace.traceSource = event.detail.callTraceSource;
+
+        webMcpAdapter?.stop();
+        webMcpAdapter = null;
+        if (document.modelContext == null) {
+            webMcpStatus.textContent = '当前浏览器未提供 document.modelContext（Adapter 未启用）';
+            return;
+        }
+        webMcpStatus.textContent = '正在连接 document.modelContext…';
+        try {
+            /* 仅在浏览器真实支持 WebMCP 时注册演示 Tool，不注入任何 polyfill。 */
+            if (webMcpDemoToolAbort == null) {
+                const registrationAbort = new AbortController();
+                await document.modelContext.registerTool({
+                    name: 'page.open_tools_tab',
+                    title: '打开 Tools 调试页签',
+                    description: '把当前 Demo 切换到 Tools 调试页签，方便用户查看 Agent 可调用能力',
+                    inputSchema: { type: 'object', additionalProperties: false },
+                    annotations: { readOnlyHint: false, untrustedContentHint: false },
+                    execute: async () => {
+                        activateTab(document.getElementById('tools-tab'));
+                        return { activeTab: 'tools' };
+                    }
+                }, { signal: registrationAbort.signal });
+                webMcpDemoToolAbort = registrationAbort;
+            }
+            const connected = await window.PatchBridgeAgentWebMcp.connectDocumentWebMcp(
+                registry,
+                document,
+                {
+                    onRefreshError: cause => {
+                        webMcpStatus.textContent = `WebMCP 刷新失败：${cause instanceof Error ? cause.message : String(cause)}`;
+                    }
+                }
+            );
+            if (generation !== readyGeneration) {
+                connected.stop();
+                return;
+            }
+            webMcpAdapter = connected;
+            webMcpStatus.textContent = '已连接；page.open_tools_tab 已进入同一列表';
+        } catch (cause) {
+            if (generation !== readyGeneration) {
+                return;
+            }
+            webMcpStatus.textContent = `WebMCP 连接失败：${cause instanceof Error ? cause.message : String(cause)}`;
+        }
+    });
+    window.addEventListener('pagehide', () => webMcpDemoToolAbort?.abort(), { once: true });
+</script>
+<!-- 监听器先注册，再加载默认 Widget；元素升级时 ready 事件不会丢失。 -->
+<script src="/ai/assets/patchbridge-agent.js"></script>
+</body>
+</html>

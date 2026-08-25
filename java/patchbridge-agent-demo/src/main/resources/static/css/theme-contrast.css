@@ -1,0 +1,90 @@
+/*
+ * 可选主题：高对比度模式。
+ * 面向低视力用户的无障碍取向：纯黑白、2px 重描边、直角、链接加下划线，
+ * 交互状态靠明度差而非颜色区分；组件令牌整体压到黑白色阶。
+ */
+body[data-theme="contrast"] {
+    --page-primary: #000000;
+    --page-topbar-background: #000000;
+    --page-topbar-color: #ffffff;
+    --page-link: #ffffff;
+    --page-link-decoration: underline;
+    --page-background: #ffffff;
+    --page-text: #000000;
+    --page-text-muted: #262626;
+    --page-card-background: #ffffff;
+    --page-card-border: 2px solid #000000;
+    --page-card-radius: 0;
+    --page-card-shadow: none;
+    --page-code-background: #ededed;
+    --page-tab-selected-color: #ffffff;
+    --page-tab-selected-background: #000000;
+    --page-topbar-control-background: #ffffff;
+    --page-topbar-control-color: #000000;
+    --page-topbar-control-border: #000000;
+}
+
+body[data-theme="contrast"] .tab-panel patchbridge-agent {
+    --patchbridge-agent-border-width: 2px;
+    --patchbridge-agent-color-primary: #000000;
+    --patchbridge-agent-color-primary-hover: #000000;
+    --patchbridge-agent-color-primary-disabled: #767676;
+    --patchbridge-agent-color-background: #ffffff;
+    --patchbridge-agent-color-surface: #ffffff;
+    --patchbridge-agent-color-surface-muted: #ededed;
+    --patchbridge-agent-color-surface-hover: #e3e3e3;
+    --patchbridge-agent-color-surface-active: #d0d0d0;
+    --patchbridge-agent-color-text: #000000;
+    --patchbridge-agent-color-text-subtle: #000000;
+    --patchbridge-agent-color-text-muted: #1a1a1a;
+    --patchbridge-agent-color-border: #000000;
+    --patchbridge-agent-color-control-border: #000000;
+    --patchbridge-agent-color-danger: #a00000;
+    --patchbridge-agent-color-danger-hover: #c00000;
+    --patchbridge-agent-color-danger-background: #ffffff;
+    --patchbridge-agent-color-danger-border: #a00000;
+    --patchbridge-agent-color-warning: #6b5000;
+    --patchbridge-agent-color-warning-background: #fffbe6;
+    --patchbridge-agent-color-warning-border: #6b5000;
+    --patchbridge-agent-color-overlay: rgba(255, 255, 255, .97);
+    --patchbridge-agent-radius-sm: 2px;
+    --patchbridge-agent-radius-md: 2px;
+    --patchbridge-agent-radius-lg: 2px;
+    --patchbridge-agent-radius-message: 2px;
+    --patchbridge-agent-radius-panel: 2px;
+    --patchbridge-agent-disabled-opacity: .65;
+}
+
+/* 无障碍取向：工具块加 2px 黑实线边框，弱化灰底改为白底，
+ * 保证折叠块内文字（含折叠态标题）与背景对比度足够。 */
+body[data-theme="contrast"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    border: 2px solid #000000;
+    background: #ffffff;
+}
+body[data-theme="contrast"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    border: 2px solid #000000;
+    background: #ffffff;
+    padding: 4px 8px;
+}
+
+body[data-theme="contrast"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #000000;
+    --patchbridge-agent-tools-color: #000000;
+    --patchbridge-agent-tools-muted-color: #1a1a1a;
+    --patchbridge-agent-tools-border-color: #000000;
+    --patchbridge-agent-tools-code-background: #ededed;
+    --patchbridge-agent-tools-empty-background: #ededed;
+    --patchbridge-agent-tools-error-color: #a00000;
+    --patchbridge-agent-tools-radius: 0;
+}
+body[data-theme="contrast"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #000000;
+    --patchbridge-agent-trace-color: #000000;
+    --patchbridge-agent-trace-muted-color: #1a1a1a;
+    --patchbridge-agent-trace-border-color: #000000;
+    --patchbridge-agent-trace-row-background: #ededed;
+    --patchbridge-agent-trace-detail-background: #ededed;
+    --patchbridge-agent-trace-empty-background: #ededed;
+    --patchbridge-agent-trace-error-color: #a00000;
+    --patchbridge-agent-trace-radius: 0;
+}

@@ -1,0 +1,46 @@
+/*
+ * Demo 页面布局骨架：只描述页面结构与排版，不定义任何颜色取值。
+ * 颜色一律通过 --page-* 主题令牌引用，令牌取值见 base-theme.css（默认深蓝）
+ * 与 theme-*.css（可选主题），主题切换时本文件无需任何改动。
+ */
+
+html, body { height: 100%; }
+/* 全站 border-box：与赛博朋克主题引入的 cybercore-css reset 保持一致，
+ * 避免切换主题时因盒模型不同导致布局跳动。 */
+*, *::before, *::after { box-sizing: border-box; }
+body { font-family: var(--page-font-family); margin: 0; background: var(--page-background); color: var(--page-text); display: flex; flex-direction: column; }
+
+.topbar { background: var(--page-topbar-background); color: var(--page-topbar-color); border-bottom: var(--page-topbar-border); padding: 14px 32px; display: flex; justify-content: space-between; align-items: center; flex: none; }
+.topbar h1 { font-size: 18px; margin: 0; }
+.topbar-actions { display: flex; align-items: center; }
+.topbar a { color: var(--page-link); text-decoration: var(--page-link-decoration); margin-left: 16px; font-size: 14px; }
+
+/* 顶栏主题切换器：结构在此，配色跟随顶栏控件令牌。 */
+.theme-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: inherit; }
+.theme-switch select { font: inherit; padding: 4px 8px; border-radius: 4px; cursor: pointer; background: var(--page-topbar-control-background); color: var(--page-topbar-control-color); border: 1px solid var(--page-topbar-control-border); }
+
+.layout { flex: 1; min-height: 0; display: flex; }
+/* 左栏在矮窗口下仍可滚动，但滚动条紧贴 AI 面板观感割裂，隐藏之（Firefox / Chromium 双写）。 */
+.side { width: 340px; flex: none; overflow-y: auto; scrollbar-width: none; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.side::-webkit-scrollbar { display: none; }
+.card { background: var(--page-card-background); border: var(--page-card-border); border-radius: var(--page-card-radius); padding: 20px; box-shadow: var(--page-card-shadow); }
+.card h2 { font-size: 15px; margin: 0 0 8px; }
+.card p { font-size: 13px; color: var(--page-text-muted); margin: 4px 0; line-height: 1.6; }
+.card code { background: var(--page-code-background); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+.agent-area { flex: 1; min-width: 0; padding: 20px 20px 20px 0; }
+.agent-shell { height: 100%; min-height: 560px; display: flex; flex-direction: column; }
+.tabs { display: flex; gap: 4px; flex: none; padding: 0 4px 8px; }
+.tab { border: 0; border-radius: var(--page-card-radius); padding: 8px 16px; color: var(--page-text-muted); background: transparent; cursor: pointer; font: inherit; }
+.tab[aria-selected="true"] { color: var(--page-tab-selected-color); background: var(--page-tab-selected-background); font-weight: 600; }
+.tab:focus-visible { outline: 2px solid var(--page-primary); outline-offset: 2px; }
+.tab-panel { flex: 1; min-height: 0; }
+.tab-panel[hidden] { display: none; }
+
+.capability-status { font-weight: 600; }
+
+@media (max-width: 900px) {
+    .layout { flex-direction: column; }
+    .side { width: auto; overflow-y: visible; }
+    .agent-area { padding: 0 20px 20px; min-height: 560px; }
+}

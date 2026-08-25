@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Spring Boot 2 Starter：引入依赖即自动装配 /ai/** 端点、静态资源与全部默认实现。
+  Spring 在这里只是 Adapter（javax.servlet 线）；遵循“约定大于配置，
+  一切默认实现可被应用同类型 Bean 覆盖”。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.patchbridge.agent</groupId>
+        <artifactId>patchbridge-agent-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>patchbridge-agent-spring-boot2-starter</artifactId>
+    <name>PatchBridge Agent Spring Boot 2 Starter</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-model-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-storage-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-mcp</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <!-- 安全 Adapter：类路径存在 Spring Security 时自动启用 CurrentUserProvider 默认实现 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-config</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- 模型网关 HTTP 与 SSE 解析：Provider 直接使用，须显式声明
+             （此前经 mcp 模块传递解析，属于隐性耦合） -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp-sse</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>${okhttp.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

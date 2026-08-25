@@ -1,0 +1,44 @@
+# Demo 应用配置。
+# 模型网关凭据通过环境变量注入（也可由 gitignored 的 local profile 提供），
+# 明文 API Key 不进版本库——.gitignore 已排除 application-local.yml。
+server:
+  port: 8080
+
+spring:
+  application:
+    name: patchbridge-agent-demo
+  datasource:
+    url: jdbc:h2:file:./data/demo-db;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:agent-schema-h2.sql
+      # 首启空库播种麦当劳 MCP 示例（守卫写在脚本内，库非空时不写入）
+      data-locations: classpath:demo-mcp-seed.sql
+  # 模型流式回答可能很长，关闭 MVC SseEmitter 异步超时
+  mvc:
+    async:
+      request-timeout: -1
+
+patchbridge-agent:
+  admin:
+    # Admin 默认关闭；Demo 显式开启，并由 DemoAdminAccessPolicy 复用现有权限体系。
+    enabled: true
+  model:
+    base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL:}
+    model: ${PATCHBRIDGE_AGENT_MODEL:deepseek-v4-flash}
+    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
+  mcp:
+    # Demo 显式使用 Global JDBC 管理模式，不与 YAML Server 配置合并。
+    # 生产密钥应由宿主密钥管理系统注入；Demo 也不提供默认值。
+    # 生成示例：openssl rand -base64 32
+    source: jdbc
+    jdbc:
+      encryption-key: ${PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY}
+
+logging:
+  level:
+    io.patchbridge.agent: INFO

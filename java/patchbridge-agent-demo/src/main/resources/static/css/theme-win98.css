@@ -1,0 +1,105 @@
+/*
+ * 可选主题：Win98 复古风。
+ * 以设计令牌复刻 98.css 的视觉语言（银灰面板、海军蓝标题栏、浮雕边框、
+ * Tahoma 小字、青绿桌面）。98.css 库本身的选择器无法穿透 Shadow DOM，
+ * 主题化只能走令牌，这正好演示令牌可以完全重塑组件外观。
+ * 浮雕边框由 --page-card-shadow 承载：::part(panel) 与页面卡片引用同一令牌。
+ */
+body[data-theme="win98"] {
+    --page-primary: #000080;
+    --page-topbar-background: #000080;
+    --page-topbar-color: #ffffff;
+    --page-link: #ffffff;
+    --page-link-decoration: underline;
+    --page-background: #008080;
+    --page-text: #000000;
+    --page-text-muted: #2f2f2f;
+    --page-card-background: #c0c0c0;
+    --page-card-radius: 0;
+    --page-card-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+    --page-code-background: #ffffff;
+    --page-tab-selected-color: #ffffff;
+    --page-tab-selected-background: #000080;
+    --page-topbar-control-background: #c0c0c0;
+    --page-topbar-control-color: #000000;
+    --page-topbar-control-border: #808080;
+}
+
+body[data-theme="win98"] .tab-panel patchbridge-agent {
+    --patchbridge-agent-font-family: Tahoma, "MS Sans Serif", "Microsoft YaHei", sans-serif;
+    --patchbridge-agent-font-size: 12px;
+    --patchbridge-agent-font-size-small: 11px;
+    --patchbridge-agent-font-size-caption: 12px;
+    --patchbridge-agent-font-size-title: 13px;
+    --patchbridge-agent-font-size-large: 14px;
+    --patchbridge-agent-border-width: 2px;
+    --patchbridge-agent-color-primary: #000080;
+    --patchbridge-agent-color-primary-hover: #1084d0;
+    --patchbridge-agent-color-primary-disabled: #808080;
+    --patchbridge-agent-color-background: #c0c0c0;
+    --patchbridge-agent-color-surface: #c0c0c0;
+    --patchbridge-agent-color-surface-muted: #b8b8b8;
+    --patchbridge-agent-color-surface-hover: #d8d8d8;
+    --patchbridge-agent-color-surface-active: #a8a8a8;
+    --patchbridge-agent-color-text: #000000;
+    --patchbridge-agent-color-text-subtle: #1f1f1f;
+    --patchbridge-agent-color-text-muted: #404040;
+    --patchbridge-agent-color-border: #808080;
+    --patchbridge-agent-color-control-border: #808080;
+    --patchbridge-agent-color-danger: #a00000;
+    --patchbridge-agent-color-danger-hover: #c00000;
+    --patchbridge-agent-color-danger-background: #e8d0d0;
+    --patchbridge-agent-color-danger-border: #a00000;
+    --patchbridge-agent-color-warning: #6b5000;
+    --patchbridge-agent-color-warning-background: #f5f0cd;
+    --patchbridge-agent-color-warning-border: #6b5000;
+    --patchbridge-agent-color-reasoning: #800080;
+    --patchbridge-agent-color-reasoning-strong: #a000a0;
+    --patchbridge-agent-color-reasoning-background: #e8d8e8;
+    --patchbridge-agent-color-code-background: #b0b0b0;
+    --patchbridge-agent-color-code-block-background: #e0e0e0;
+    --patchbridge-agent-color-overlay: rgba(192, 192, 192, .9);
+    --patchbridge-agent-radius-sm: 0;
+    --patchbridge-agent-radius-md: 0;
+    --patchbridge-agent-radius-lg: 0;
+    --patchbridge-agent-radius-message: 0;
+    --patchbridge-agent-radius-panel: 0;
+}
+
+/* 工具块做成 Win98 经典“凹陷面板”（与卡片凸起浮雕正好相反）：
+ * 内阴影方向翻转即得下沉观感，结果区类似只读文本域。 */
+body[data-theme="win98"] .tab-panel patchbridge-agent::part(tool-call-block) {
+    background: #b8b8b8;
+    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+}
+body[data-theme="win98"] .tab-panel patchbridge-agent::part(tool-result-block) {
+    background: #ffffff;
+    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+    padding: 4px 8px;
+}
+
+body[data-theme="win98"] .tab-panel patchbridge-agent-tool-inspector {
+    --patchbridge-agent-tools-accent-color: #000080;
+    --patchbridge-agent-tools-background: #c0c0c0;
+    --patchbridge-agent-tools-card-background: #d8d8d8;
+    --patchbridge-agent-tools-border-color: #808080;
+    --patchbridge-agent-tools-color: #000000;
+    --patchbridge-agent-tools-muted-color: #404040;
+    --patchbridge-agent-tools-code-background: #e0e0e0;
+    --patchbridge-agent-tools-empty-background: #d8d8d8;
+    --patchbridge-agent-tools-error-color: #a00000;
+    --patchbridge-agent-tools-radius: 0;
+}
+body[data-theme="win98"] .tab-panel patchbridge-agent-call-trace {
+    --patchbridge-agent-trace-accent-color: #000080;
+    --patchbridge-agent-trace-background: #c0c0c0;
+    --patchbridge-agent-trace-card-background: #d8d8d8;
+    --patchbridge-agent-trace-border-color: #808080;
+    --patchbridge-agent-trace-color: #000000;
+    --patchbridge-agent-trace-muted-color: #404040;
+    --patchbridge-agent-trace-row-background: #e0e0e0;
+    --patchbridge-agent-trace-detail-background: #e0e0e0;
+    --patchbridge-agent-trace-empty-background: #d8d8d8;
+    --patchbridge-agent-trace-error-color: #a00000;
+    --patchbridge-agent-trace-radius: 0;
+}

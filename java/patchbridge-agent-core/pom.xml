@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  核心契约模块（Java 8，零第三方依赖）。
+
+  设计约束（对应总体设计文档第 6 节与 v0.1 冻结决策 21.3）：
+    - 只定义 SPI 契约、公共 DTO、错误模型和极少量纯 Java 默认实现；
+    - 不依赖 Spring / Servlet / Jackson / OkHttp / 任何 LLM 厂商 SDK；
+    - JSON Schema 以 Map 形式表达，序列化交给上层 Adapter（Starter / Jackson）完成。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.patchbridge.agent</groupId>
+        <artifactId>patchbridge-agent-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>patchbridge-agent-core</artifactId>
+    <name>PatchBridge Agent Core</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-annotations</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

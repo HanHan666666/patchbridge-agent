@@ -1,0 +1,12 @@
+/*
+ * Press Start 2P 像素字体（SIL OFL 1.1，全文见 PressStart2P-OFL-LICENSE.txt）。
+ * NES 像素与奇幻 RPG 两个主题共用。常驻加载无副作用：
+ * 页面没有元素使用该字体族时，浏览器不会下载字体文件。
+ */
+@font-face {
+  font-family: "Press Start 2P";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("press-start-2p.woff2") format("woff2");
+}

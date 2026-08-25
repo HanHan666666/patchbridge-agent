@@ -1,0 +1,48 @@
+# --- Java ---
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# --- 前端 ---
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- IDE ---
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# --- 本地运行数据 / 密钥（严禁提交）---
+data/
+*.mv.db
+*.trace.db
+application-local.yml
+application-local.yaml
+application-local.properties
+*.local.yml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# --- 分发包与本地归档（避免把工作区快照误提交）---
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# --- 日志与临时文件 ---
+logs/
+*.log
+tmp/
+
+# E2E 运行产物（截图等）
+web/tools/*.png

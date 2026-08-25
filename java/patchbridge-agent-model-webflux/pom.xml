@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  可选的 WebFlux 模型上游 Adapter。
+
+  该模块只实现 Core 的 ModelProvider SPI，不依赖 MVC Starter，也不提供自动装配。
+  宿主必须显式构造 Provider 并注册为 Bean，从而避免依赖模块擅自改变应用的 Web 类型。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.patchbridge.agent</groupId>
+        <artifactId>patchbridge-agent-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>patchbridge-agent-model-webflux</artifactId>
+    <name>PatchBridge Agent Model WebFlux Adapter</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-model-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <!-- WebFlux 不向宿主传递；选择该 Adapter 的应用必须显式提供 WebClient 运行时。 -->
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

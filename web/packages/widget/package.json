@@ -1,0 +1,19 @@
+{
+  "name": "@patchbridge-agent/widget",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "默认 View：零依赖 Web Component 聊天面板（块级平铺，宿主页面两行接入）",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=iife --minify --charset=utf8 --outfile=dist/patchbridge-agent.js && node scripts/copy-to-starter.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchbridge-agent/agent": "0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10",
+    "playwright-core": "^1.62.1"
+  }
+}

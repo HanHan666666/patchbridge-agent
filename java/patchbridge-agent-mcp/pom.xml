@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MCP Gateway 客户端模块：极窄的 MCP 协议适配（tools/list + tools/call，
+  Streamable HTTP），HTTP 复用 OkHttp 3.14.x（纯 Java 8 线），JSON 复用 Jackson。
+  不引入官方 MCP Java SDK：其远程 Client 基于 JDK 11+ HttpClient 且附带 Reactor，
+  会抬高 Java 8 存量系统的依赖基线（总体设计文档第 22 节）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.patchbridge.agent</groupId>
+        <artifactId>patchbridge-agent-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>patchbridge-agent-mcp</artifactId>
+    <name>PatchBridge Agent MCP</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
