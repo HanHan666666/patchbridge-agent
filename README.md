@@ -518,6 +518,12 @@ API 稳定之前，大的设计改动建议先对齐边界，再进入实现。
 
 ---
 
+## 致谢
+
+感谢 [yike-citing](https://github.com/yike-citing) 为本项目提供了数以亿计的 token，加速了本项目的开发与想法验证。
+
+---
+
 ## License
 
 本项目采用 [MIT License](LICENSE)。Demo 中 vendored 前端资源的来源与许可证见 [Third-Party Notices](THIRD_PARTY_NOTICES.md)。
