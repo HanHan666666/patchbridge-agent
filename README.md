@@ -40,6 +40,40 @@ PatchBridge Agent 让运行多年的 Java / Spring Boot 企业系统低成本获
 
 ---
 
+## 核心功能实拍
+
+以下截图来自本地运行的 Demo（`admin` 账号视角），设备数据为 Demo 内置样例。
+
+### 浏览器内 Agent Runtime 与 Tool Calling
+
+![浏览器 Agent Runtime 完成一次设备查询并调用后端 Tool](docs/assets/demo-chat-tool-call.png)
+
+用户用自然语言提问，Agent Loop 在浏览器中完成一轮完整执行：深度思考、Tool 调用与结果、最终回答依次流式渲染。图中模型选择的是 Java 后端 Tool `local.device_get`；Tool 调用携带当前登录态发往服务端，权限检查仍由原有安全体系执行。
+
+### Unified Tool Registry 与 Tools Inspector
+
+![Tools Inspector 展示统一 Tool 目录：前端、后端与远程 MCP Tool 同目录可见](docs/assets/demo-mcp-tools-overview.png)
+
+Tools Inspector 只读展示当前用户可调用的 Tool 快照：33 个 Tool 同时覆盖前端 Tool、Java 后端 Tool 和远程 MCP Tool 三种来源，共用同一个 `revision`；危险操作会明确标注“调用前需确认”。其中 29 个 MCP Tool 来自下一节的反向代理。
+
+### MCP 反向代理远程 Tool
+
+![统一目录中的 mcp.mcd.* 远程 MCP Tool 列表](docs/assets/demo-mcp-remote-proxy.png)
+
+管理员在服务端配置并启用远程 MCP Server 后，MCP Gateway 把它反向代理成一组普通 Agent Tool：`mcp.mcd.*` 命名空间下的 29 个 Tool 进入同一目录，浏览器只看到统一的名称和参数 Schema，接触不到远程地址与凭据；协议通信和认证全部由服务端完成。
+
+### Browser Call Trace
+
+![Browser Call Trace 展示一次执行中的模型与 Tool 调用明细](docs/assets/demo-call-trace.png)
+
+Call Trace 按 Execution 记录一次执行的完整过程：用户输入、每次模型调用与 Tool 调用、耗时，以及输入 / 输出 token、首 token 延迟等指标，用于复盘单次执行的每个环节。轨迹保存在浏览器本地，自动保留最近 30 次执行。
+
+### Admin Console：审计与 Global MCP
+
+![Admin Console 展示调用统计、审计 Trace 与 UP 状态的 Global MCP Server](docs/assets/demo-admin-mcp-up.png)
+
+Admin Console 把服务端调用统计、审计 Trace 查询和 Global MCP Server 管理放在同一个后台：管理员在线刷新、测试连通性、启停远程 MCP，审计记录给出每次模型 / Tool 调用的结果与耗时。图中 Demo 内置的示例 Server `mcd` 处于 `UP` 状态：Bearer 认证，29 个 Tool（`revision 2`）。凭据以密文保存在服务端，管理界面只显示认证类型与状态，不回显凭据本身。
+
 ## 它解决什么问题
 
 存量企业系统接入 AI，通常同时遇到三个困难。
