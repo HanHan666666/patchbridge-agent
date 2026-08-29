@@ -46,6 +46,7 @@ patchbridge-agent:
     base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL}
     model: ${PATCHBRIDGE_AGENT_MODEL}
     api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
+    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
 ~~~
 
 环境变量示例：
@@ -54,9 +55,14 @@ patchbridge-agent:
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://model-gateway.example/v1'
 export PATCHBRIDGE_AGENT_MODEL='model-name-placeholder'
 export PATCHBRIDGE_AGENT_MODEL_API_KEY='<model-api-key-placeholder>'
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
 ~~~
 
-如果网关不要求认证，api-key 可以为空。默认 Provider 要求 base-url 和 model 在启动时非空。提供自定义 <code>ModelProvider</code> Bean 时，默认 Provider 退让，其配置要求由自定义实现决定。
+如果网关不要求认证，api-key 可以为空。默认 Provider 要求 base-url 和 model 在启动时非空。
+`context-window-tokens` 无论默认还是自定义 Provider 都必须明确配置，并与真实模型窗口一致；
+框架固定在 80% 自动压缩。提供自定义 <code>ModelProvider</code> Bean 时，默认 Provider 退让，
+但自定义实现还必须满足正常 usage 和 `ModelStateProjector` 压缩投影契约。详见
+[《使用上下文压缩》](context-compaction.md)。
 
 ### 满足身份和会话硬依赖
 
@@ -79,6 +85,8 @@ export PATCHBRIDGE_AGENT_MODEL_API_KEY='<model-api-key-placeholder>'
 | <code>CurrentUserProvider</code> | <code>SecurityContextCurrentUserProvider</code> | 仅 Spring Security 存在时 |
 | <code>ConversationOwnerResolver</code> | <code>UserIdConversationOwnerResolver</code> | 多租户必须替换 |
 | <code>ModelProvider</code> | <code>OpenAiCompatibleModelProvider</code> | 同类型 Bean 替换 |
+| <code>ModelStateProjector</code> | 当前默认 <code>ModelProvider</code> | 自定义 Provider 必须同时提供投影语义 |
+| <code>ContextCompactionProvider</code> | <code>DefaultContextCompactionProvider</code> | 使用当前 ModelGateway；同类型 Bean 可完整替换 |
 | <code>ConversationRepository</code> | <code>JdbcConversationRepository</code> | 需要 DataSource |
 | <code>AuditSink</code> | <code>JdbcAuditSink</code> | DataSource + audit enabled |
 | <code>AuditQueryRepository</code> | <code>JdbcAuditQueryRepository</code> | 需要 DataSource |

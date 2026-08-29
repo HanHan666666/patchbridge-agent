@@ -17,6 +17,20 @@ import type {
 import type { ToolClient } from '../src/clients/toolClient';
 import type { AgentHookFailure } from '../src/extensions';
 import type { AgentError } from '../src/types';
+import type { ContextCompactionGateway } from '../src/clients/contextCompactionClient';
+import { TEST_MODEL_USAGE, testModelContext } from './testContext';
+
+/** 工厂测试使用的固定模型窗口；这些用例不触发压缩模型调用。 */
+const CONTEXT_GATEWAY: ContextCompactionGateway = {
+  configuration: async () => ({
+    contextWindowTokens: 128_000,
+    automaticThresholdTokens: 102_400,
+    keepRecentTokens: 20_000,
+  }),
+  compact: async () => {
+    throw new Error('该工厂测试不触发上下文压缩');
+  },
+};
 
 /** 记录访问的 localStorage 替身；Controller 的 UX 缓存键与轨迹键都会经过它。 */
 class RecordingStorage {
@@ -51,7 +65,12 @@ class SingleTurnModel implements Model {
     yield { type: 'block-start', index: 0, block: { type: 'text' } };
     yield { type: 'block-delta', index: 0, delta: { type: 'text', text: '收到，已完成。' } };
     yield { type: 'block-stop', index: 0 };
-    yield { type: 'message-stop', stopReason: 'end-turn', usage: null, modelState: null };
+    yield {
+      type: 'message-stop',
+      stopReason: 'end-turn',
+      usage: TEST_MODEL_USAGE,
+      modelState: null,
+    };
   }
 }
 
@@ -71,7 +90,7 @@ class SingleConversationClient implements ConversationClient {
   async get(id: string): Promise<ConversationDetail> {
     return {
       conversation: conversation(id, 0),
-      context: { messages: [], modelState: null },
+      context: { messages: [], modelContext: testModelContext() },
     };
   }
 
@@ -133,6 +152,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
       conversationClient: conversations,
       toolClient: new EmptyToolClient(),
       storageKey: 'ux:last-conversation',
+      contextCompactionGateway: CONTEXT_GATEWAY,
     });
 
     await controller.initialize();
@@ -158,6 +178,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
       toolClient: new EmptyToolClient(),
       storageKey: 'ux:last-conversation',
       callTrace: { mode: 'memory' },
+      contextCompactionGateway: CONTEXT_GATEWAY,
     });
 
     await controller.initialize();
@@ -188,6 +209,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
       toolClient: new EmptyToolClient(),
       storageKey: 'ux:last-conversation',
       callTrace: { mode: 'persistent', storageKey: 'ct-factory-test' },
+      contextCompactionGateway: CONTEXT_GATEWAY,
     });
 
     await controller.initialize();
@@ -225,6 +247,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
         }],
         onHookError: failure => diagnostics.push(failure),
       },
+      contextCompactionGateway: CONTEXT_GATEWAY,
     });
 
     await controller.initialize();

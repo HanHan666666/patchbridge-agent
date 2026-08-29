@@ -15,6 +15,7 @@
  * </ul>
  */
 import type { ConversationClient } from './clients/conversationClient';
+import type { ContextManager } from './contextManager';
 import type {
   AgentEngine,
   AgentExecution,
@@ -46,6 +47,7 @@ import type {
 import {
   snapshotAgentMessage,
   snapshotConversationContext,
+  snapshotModelContext,
 } from './messageValues';
 
 /** Controller 依赖注入项：engine 与统一 Tool Registry 在同一应用生命周期内共享。 */
@@ -53,6 +55,8 @@ export interface AgentControllerOptions {
   engine: AgentEngine;
   conversations: ConversationClient;
   tools: ToolRegistry;
+  /** 自动与手动压缩共享的模型上下文管理器。 */
+  contextManager: ContextManager;
   /** localStorage 缓存键前缀（仅缓存“上次打开的会话 ID”，属 UX Cache 而非真相）。 */
   storageKey?: string;
   /**
@@ -71,6 +75,8 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   private readonly conversations: ConversationClient;
   /** 所有 Tool 来源与执行路由的唯一 Registry。 */
   private readonly tools: ToolRegistry;
+  /** 模型窗口配置、边界选择和摘要调用的统一入口。 */
+  private readonly contextManager: ContextManager;
   /** 只读调试端口：执行中钉住本轮快照，空闲时跟随 Registry。 */
   private readonly toolInspection: ExecutionAwareToolInspectionSource;
   /** 调用轨迹端口；null 表示采集未启用，对外只暴露显式空源。 */
@@ -97,6 +103,11 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   /** 当前运行句柄；取消与中断响应只能作用于该 Execution。 */
   private currentExecution: AgentExecution | null = null;
 
+  /** 手动压缩独立取消源；生成中的摘要可以停止，进入保存后只允许导航作废提交。 */
+  private contextCompactionAbort: AbortController | null = null;
+  /** 手动压缩代次：导航、释放或后续操作可阻止迟到结果提交。 */
+  private contextCompactionGeneration = 0;
+
   /** 标识 Controller 是否已经释放。 */
   private disposed = false;
 
@@ -105,6 +116,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.engine = options.engine;
     this.conversations = options.conversations;
     this.tools = options.tools;
+    this.contextManager = options.contextManager;
     this.toolInspection = new ExecutionAwareToolInspectionSource(options.tools);
     this.callTrace = options.callTrace ?? null;
     this.storageKey = options.storageKey ?? 'patchbridge-agent:last-conversation';
@@ -140,6 +152,13 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     const generation = this.beginNavigation();
     this.dispatch({ type: 'CONVERSATIONS_LOADING_STARTED' });
     try {
+      const configuration = await this.contextManager.loadConfiguration(
+        this.navigationAbort?.signal,
+      );
+      if (generation !== this.navigationGeneration || this.disposed) {
+        return;
+      }
+      this.dispatch({ type: 'CONTEXT_CONFIGURATION_LOADED', configuration });
       const conversations = await this.conversations.list(
         this.navigationAbort?.signal,
       );
@@ -181,7 +200,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     }
   }
 
-  /** 原子加载指定会话的元数据、消息与 ModelState。 */
+  /** 原子加载指定会话的元数据、完整消息与 ModelContext。 */
   async loadConversation(id: string): Promise<void> {
     // Navigation 与 Run 互斥：切换会话前终止进行中的生成（设计文档第 11 节）
     this.abortRun();
@@ -268,7 +287,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
       const execution = this.engine.start({
         conversation: {
           messages: this.runBaseMessages,
-          modelState: this.state.modelState,
+          modelContext: this.state.modelContext,
         },
         toolSnapshot,
         conversationId: this.state.conversation?.conversationId ?? null,
@@ -285,7 +304,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
         this.currentExecution = null;
       }
       this.toolInspection.deactivate();
-      this.commitRunResult(result.messages, result.modelState);
+      this.commitRunResult(result.messages, result.modelContext);
       this.dispatch({ type: 'RUN_FINISHED', outcome: result.outcome });
       if (result.outcome.type === 'cancelled') {
         // 主动取消只保留当前页已完成的稳定消息，不创建或保存本轮会话。
@@ -320,6 +339,85 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.respondToConfirmation(false);
   }
 
+  /**
+   * 在空闲状态使用当前模型生成检查点，并在持久化会话中原子保存后才提交本地状态。
+   *
+   * <p>摘要成功但保存冲突仍视为整体失败；完整消息和原模型工作上下文始终保持不变。
+   */
+  async compactContext(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (!this.idleForSending()) {
+      throw invalidStateError('只有 Agent 空闲时才能手动压缩上下文');
+    }
+    if (this.state.contextWindow.currentTokens == null) {
+      throw invalidStateError('尚未取得模型 token usage，不能手动压缩上下文');
+    }
+    if (!this.state.contextWindow.compactable) {
+      throw invalidStateError('当前模型上下文没有可安全压缩的历史前缀');
+    }
+    const generation = this.beginContextCompaction();
+    const abort = this.contextCompactionAbort;
+    if (abort == null) {
+      throw new Error('手动压缩取消源未创建');
+    }
+    this.dispatch({ type: 'CONTEXT_COMPACTION_STARTED' });
+    try {
+      const candidate = await this.contextManager.compact(
+        {
+          messages: this.state.messages,
+          modelContext: this.state.modelContext,
+        },
+        'manual',
+        {
+          traceId: newTraceId(),
+          conversationId: this.state.conversation?.conversationId ?? null,
+        },
+        abort.signal,
+      );
+      if (!this.isCurrentContextCompaction(generation)) {
+        return;
+      }
+      const conversation = this.state.conversation;
+      if (conversation == null) {
+        this.finishContextCompaction(generation);
+        this.dispatch({
+          type: 'CONTEXT_COMPACTION_COMPLETED',
+          modelContext: snapshotModelContext(candidate.modelContext),
+          conversation: null,
+        });
+        return;
+      }
+      this.dispatch({ type: 'CONTEXT_COMPACTION_SAVING' });
+      const saved = await this.conversations.save(conversation.conversationId, {
+        title: conversation.title,
+        revision: conversation.revision,
+        context: candidate,
+      }, abort.signal);
+      if (!this.isCurrentContextCompaction(generation)) {
+        return;
+      }
+      this.finishContextCompaction(generation);
+      this.dispatch({
+        type: 'CONTEXT_COMPACTION_COMPLETED',
+        modelContext: snapshotModelContext(candidate.modelContext),
+        conversation: saved,
+      });
+    } catch (cause) {
+      if (!this.isCurrentContextCompaction(generation)) {
+        return;
+      }
+      this.finishContextCompaction(generation);
+      this.dispatch({
+        type: 'CONTEXT_COMPACTION_FAILED',
+        error: isConflict(cause)
+          ? conversationConflictError()
+          : normalizeRunError(cause),
+      });
+    }
+  }
+
   /** 返回 Controller 持有的唯一 Unified Tool Registry。 */
   getToolRegistry(): ToolRegistry {
     return this.tools;
@@ -345,11 +443,24 @@ export class DefaultAgentController implements PatchBridgeAgentController {
 
   /** 中止当前 Execution，并保留已经完成的稳定消息。 */
   abort(): void {
+    if (this.state.status === 'compacting-context') {
+      // 自动压缩属于当前 Execution，必须取消整个 Run；手动压缩没有活动 Run，
+      // 只取消它自己的摘要请求。两者共享 View 状态，但生命周期所有者不同。
+      if (this.runActive) {
+        this.abortRun();
+        this.dispatch({ type: 'RUN_FINISHED', outcome: { type: 'cancelled' } });
+        return;
+      }
+      this.cancelContextCompaction();
+      this.dispatch({ type: 'CONTEXT_COMPACTION_CANCELLED' });
+      return;
+    }
     if (!this.runActive || this.state.runOutcome != null) {
       // 空闲或已经进入保存阶段时不存在可取消的 Execution，保持既有终态不变。
       return;
     }
     this.abortRun();
+    this.cancelContextCompaction();
     // 主动停止立即投影 cancelled；Execution 的迟到结果由 runGeneration 丢弃。
     this.dispatch({ type: 'RUN_FINISHED', outcome: { type: 'cancelled' } });
   }
@@ -404,7 +515,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
           type: 'RUN_MESSAGES_COMMITTED',
           baseMessages: this.runBaseMessages,
           addedMessages: event.messages,
-          modelState: event.modelState,
+          modelContext: event.modelContext,
         });
         break;
       case 'interrupt':
@@ -447,16 +558,45 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.toolInspection.deactivate();
   }
 
-  /** run 以任意非异常终态结束时提交同一快照的稳定消息与 ModelState。 */
+  /** 创建新的手动压缩代次，并取消此前尚未收敛的摘要调用。 */
+  private beginContextCompaction(): number {
+    this.cancelContextCompaction();
+    this.contextCompactionAbort = new AbortController();
+    this.contextCompactionGeneration += 1;
+    return this.contextCompactionGeneration;
+  }
+
+  /** 判断摘要或保存结果是否仍属于当前手动压缩。 */
+  private isCurrentContextCompaction(generation: number): boolean {
+    return generation === this.contextCompactionGeneration
+      && this.contextCompactionAbort != null
+      && !this.disposed;
+  }
+
+  /** 成功或失败收敛当前代次，但不额外推进代次。 */
+  private finishContextCompaction(generation: number): void {
+    if (generation === this.contextCompactionGeneration) {
+      this.contextCompactionAbort = null;
+    }
+  }
+
+  /** 作废并取消当前摘要或保存请求；迟到结果由 generation 屏障丢弃。 */
+  private cancelContextCompaction(): void {
+    this.contextCompactionGeneration += 1;
+    this.contextCompactionAbort?.abort();
+    this.contextCompactionAbort = null;
+  }
+
+  /** run 以任意非异常终态结束时提交同一快照的稳定消息与 ModelContext。 */
   private commitRunResult(
     added: readonly AgentMessage[],
-    modelState: AgentState['modelState'],
+    modelContext: AgentState['modelContext'],
   ): void {
     this.dispatch({
       type: 'RUN_MESSAGES_COMMITTED',
       baseMessages: this.runBaseMessages,
       addedMessages: added,
-      modelState,
+      modelContext,
     });
   }
 
@@ -482,7 +622,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
         revision: conversation.revision,
         context: {
           messages,
-          modelState: this.state.modelState,
+          modelContext: this.state.modelContext,
         },
       });
       if (!this.isCurrentRun(runGeneration)) {
@@ -521,6 +661,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
 
   /** 开始一次导航：终止旧导航并推进令牌；返回本次导航的 generation。 */
   private beginNavigation(): number {
+    this.cancelContextCompaction();
     this.navigationAbort?.abort();
     this.navigationAbort = new AbortController();
     this.navigationGeneration += 1;
@@ -573,6 +714,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
       'loading-conversations',
       'loading-conversation',
       'loading-tools',
+      'compacting-context',
       'streaming',
       'waiting-confirmation',
       'calling-tool',
@@ -603,6 +745,8 @@ export interface PatchBridgeAgentController {
   deleteConversation(id: string): Promise<void>;
   /** 发送一轮文本或多模态消息。 */
   sendMessage(text: string, images?: readonly ImageAttachment[]): Promise<void>;
+  /** 在空闲状态使用当前模型手动生成上下文检查点。 */
+  compactContext(): Promise<void>;
   /** 返回 Engine 与只读 Inspector 共用的唯一 Tool Registry。 */
   getToolRegistry(): ToolRegistry;
   /** 返回执行中固定、空闲时跟随 Registry 的 Tool 调试数据源。 */

@@ -11,14 +11,25 @@ import type {
   AgentMessage,
   AgentRunOutcome,
   AgentState,
+  ContextCompactionConfiguration,
   Conversation,
   ConversationContext,
-  ModelState,
+  ModelContext,
   PendingConfirmation,
 } from './types';
+import {
+  EMPTY_MODEL_CONTEXT,
+  inspectContextWindow,
+} from './contextManager';
 
 /** AgentState 可以接受的领域事件；每种事件只表达一个明确的业务事实。 */
 export type AgentStateEvent =
+  | {
+      /** 初始化阶段已经取得服务端模型窗口配置。 */
+      readonly type: 'CONTEXT_CONFIGURATION_LOADED';
+      /** 服务端根据必需模型窗口派生的压缩参数。 */
+      readonly configuration: ContextCompactionConfiguration;
+    }
   | {
       /** 开始加载初始化所需的会话列表。 */
       readonly type: 'CONVERSATIONS_LOADING_STARTED';
@@ -48,7 +59,7 @@ export type AgentStateEvent =
       readonly type: 'CONVERSATION_LOADED';
       /** 成为当前上下文的会话元数据。 */
       readonly conversation: Conversation;
-      /** 该会话原子加载的消息与 Provider 状态。 */
+      /** 该会话原子加载的完整消息与模型工作上下文。 */
       readonly context: ConversationContext;
     }
   | {
@@ -71,7 +82,7 @@ export type AgentStateEvent =
       /** Engine 报告当前 Run 的执行阶段发生变化。 */
       readonly type: 'RUN_STATUS_CHANGED';
       /** Engine 能够直接报告的运行状态。 */
-      readonly status: 'streaming' | 'calling-tool';
+      readonly status: 'compacting-context' | 'streaming' | 'calling-tool';
     }
   | {
       /** 模型产生了一段可展示的回答正文。 */
@@ -92,8 +103,34 @@ export type AgentStateEvent =
       readonly baseMessages: readonly AgentMessage[];
       /** Engine 在本轮新增的稳定消息。 */
       readonly addedMessages: readonly AgentMessage[];
-      /** 与该消息快照严格对应的 Provider 续接状态。 */
-      readonly modelState: ModelState | null;
+      /** 与该消息快照严格对应的完整模型工作上下文。 */
+      readonly modelContext: ModelContext;
+    }
+  | {
+      /** 用户主动压缩已经开始调用当前模型。 */
+      readonly type: 'CONTEXT_COMPACTION_STARTED';
+    }
+  | {
+      /** 摘要生成成功，持久化会话正在原子保存候选上下文。 */
+      readonly type: 'CONTEXT_COMPACTION_SAVING';
+    }
+  | {
+      /** 草稿提交或持久化保存成功后，新的模型工作上下文正式生效。 */
+      readonly type: 'CONTEXT_COMPACTION_COMPLETED';
+      /** 已经完成摘要和必要持久化的模型工作上下文。 */
+      readonly modelContext: ModelContext;
+      /** 持久化会话成功时返回的新 revision；草稿为 null。 */
+      readonly conversation: Conversation | null;
+    }
+  | {
+      /** 用户停止手动压缩，原模型上下文保持不变。 */
+      readonly type: 'CONTEXT_COMPACTION_CANCELLED';
+    }
+  | {
+      /** 摘要生成或原子保存失败，原模型上下文保持不变。 */
+      readonly type: 'CONTEXT_COMPACTION_FAILED';
+      /** 可直接展示的标准错误。 */
+      readonly error: AgentError;
     }
   | {
       /** 危险工具在执行前请求用户确认。 */
@@ -153,7 +190,14 @@ export function createInitialAgentState(): AgentState {
     conversation: null,
     conversations: [],
     messages: [],
-    modelState: null,
+    modelContext: EMPTY_MODEL_CONTEXT,
+    contextConfiguration: null,
+    contextWindow: Object.freeze({
+      currentTokens: null,
+      source: null,
+      percentage: null,
+      compactable: false,
+    }),
     streamingAssistant: null,
     pendingConfirmation: null,
     error: null,
@@ -177,6 +221,10 @@ export function reduceAgentState(
         status: 'loading-conversations',
         error: null,
         runOutcome: null,
+      });
+    case 'CONTEXT_CONFIGURATION_LOADED':
+      return copyState(state, {
+        contextConfiguration: event.configuration,
       });
     case 'CONVERSATIONS_LOADED':
       return copyState(state, {
@@ -203,7 +251,7 @@ export function reduceAgentState(
         status: 'done',
         conversation: event.conversation,
         messages: event.context.messages,
-        modelState: event.context.modelState,
+        modelContext: event.context.modelContext,
         runOutcome: null,
       });
     case 'NEW_CONVERSATION_STARTED':
@@ -211,7 +259,7 @@ export function reduceAgentState(
         status: 'idle',
         conversation: null,
         messages: [],
-        modelState: null,
+        modelContext: EMPTY_MODEL_CONTEXT,
         streamingAssistant: null,
         pendingConfirmation: null,
         error: null,
@@ -229,7 +277,7 @@ export function reduceAgentState(
         conversation: null,
         conversations,
         messages: [],
-        modelState: null,
+        modelContext: EMPTY_MODEL_CONTEXT,
         streamingAssistant: null,
         pendingConfirmation: null,
         error: null,
@@ -258,7 +306,7 @@ export function reduceAgentState(
     case 'RUN_MESSAGES_COMMITTED':
       return copyState(state, {
         messages: [...event.baseMessages, ...event.addedMessages],
-        modelState: event.modelState,
+        modelContext: event.modelContext,
         streamingAssistant: null,
       });
     case 'TOOL_CONFIRMATION_REQUESTED':
@@ -286,6 +334,27 @@ export function reduceAgentState(
         conversation: event.conversation,
         conversations: upsertConversation(state.conversations, event.conversation),
       });
+    case 'CONTEXT_COMPACTION_STARTED':
+      return copyState(state, {
+        status: 'compacting-context',
+        error: null,
+        runOutcome: null,
+      });
+    case 'CONTEXT_COMPACTION_SAVING':
+      return copyState(state, { status: 'saving' });
+    case 'CONTEXT_COMPACTION_COMPLETED':
+      return copyState(state, {
+        status: 'done',
+        modelContext: event.modelContext,
+        conversation: event.conversation ?? state.conversation,
+        conversations: event.conversation == null
+          ? state.conversations
+          : upsertConversation(state.conversations, event.conversation),
+      });
+    case 'CONTEXT_COMPACTION_CANCELLED':
+      return copyState(state, {
+        status: state.conversation == null && state.messages.length === 0 ? 'idle' : 'done',
+      });
     case 'RUN_FAILED':
       return copyState(state, {
         status: 'error',
@@ -294,6 +363,7 @@ export function reduceAgentState(
         error: event.error,
         runOutcome: null,
       });
+    case 'CONTEXT_COMPACTION_FAILED':
     case 'NAVIGATION_FAILED':
     case 'CONVERSATION_SAVE_CONFLICTED':
     case 'CONVERSATION_SAVE_FAILED':
@@ -319,10 +389,18 @@ type AgentStateChanges = Partial<AgentState>;
  */
 function copyState(state: AgentState, changes: AgentStateChanges): AgentState {
   const next = { ...state, ...changes };
+  const conversation = {
+    messages: next.messages,
+    modelContext: next.modelContext,
+  };
   return {
     ...next,
     conversations: [...next.conversations],
     messages: [...next.messages],
+    contextWindow: inspectContextWindow(
+      conversation,
+      next.contextConfiguration,
+    ),
   };
 }
 

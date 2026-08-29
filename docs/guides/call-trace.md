@@ -52,8 +52,8 @@ Widget 元素用 <code>call-trace="memory|persistent"</code>，Headless 工厂�
 ### 为什么轨迹不写进会话历史
 
 服务端返回的会话历史已经完整保存用户文本、Assistant 正文/思考、Tool Call 参数与
-Tool Result，但它的契约是 `ConversationContext { messages, modelState }`：只表达下一轮
-模型调用需要恢复的稳定上下文。调用开始时间、耗时、token 用量、确认交互和执行失败边界
+Tool Result，但它的契约是 `ConversationContext { messages, modelContext }`：完整消息用于展示，
+`modelContext` 只表达下一轮模型调用需要恢复的工作上下文。调用开始时间、耗时、token 用量、确认交互和执行失败边界
 是可观测性数据，不属于模型上下文；把这些字段塞进消息会污染公共消息语义，也可能被
 Provider 误送给模型。
 
@@ -93,6 +93,9 @@ SSE reader 取消但不等待清理完成；迟到的 EOF、取消或清理错�
 `model-call-completed` 一次性携带 Provider 标准化后的 `ModelUsage`、首 token 延迟和
 首 token 后的输出阶段耗时。逐 token 增量仍不进入 Hook，避免观察插件拖慢模型流。
 Controller 在稳定消息提交后以 `responseMessageId` 与 `callId` 补全正文、思考和 Tool 结果。
+Runtime 的消息事件携带本轮累计稳定消息；`CallTraceStore` 先把一次事件里的全部内容写入
+候选轨迹，再统一校验 Tool 引用并一次提交。连续多轮 `tool-use` 因此不会把尚待同批补录的
+新 Assistant 误判为悬空引用；任一消息非法时，整批候选都不进入实时轨迹。
 
 组件里的 `首 token 40.6 s` 表示模型调用链开始到首个非空内容增量的等待时间；
 `平均 102 tok/s` 使用 Provider 报告的 `outputTokens / 输出阶段秒数`，输出阶段从首个非空

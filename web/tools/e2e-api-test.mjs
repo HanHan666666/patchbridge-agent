@@ -75,6 +75,20 @@ async function main() {
   'Global MCP 使用可管理的 JDBC 配置源且不依赖预置 Server',
   JSON.stringify(mcpConfiguration.body).slice(0, 160));
 
+  console.log('== 模型窗口与上下文压缩配置 ==');
+  const modelConfiguration = await api(admin, '/ai/model/config');
+  const contextWindowTokens = modelConfiguration.body?.contextWindowTokens;
+  ok(modelConfiguration.status === 200
+      && Number.isSafeInteger(contextWindowTokens)
+      && modelConfiguration.body?.automaticThresholdTokens
+        === Math.floor(contextWindowTokens * 0.8)
+      && Number.isSafeInteger(modelConfiguration.body?.keepRecentTokens)
+      && modelConfiguration.body.keepRecentTokens > 0
+      && modelConfiguration.body.keepRecentTokens
+        < modelConfiguration.body.automaticThresholdTokens,
+  '服务端公开唯一模型窗口、80% 自动阈值与合法近期预算',
+  JSON.stringify(modelConfiguration.body));
+
   console.log('== 真实模型网关结构化 SSE ==');
   const streamResponse = await fetch(`${BASE}/ai/model/stream`, {
     method: 'POST',
@@ -136,9 +150,14 @@ async function main() {
           { id: 'e2e-user-1', role: 'user', blocks: [{ type: 'text', text: '查询设备 DEV-1001' }] },
           { id: 'e2e-assistant-1', role: 'assistant', blocks: [{ type: 'text', text: '设备运行正常' }] },
         ],
-        modelState: {
-          format: 'e2e-provider/v1',
-          data: { opaque: 'e2e-state-1' },
+        modelContext: {
+          checkpoint: null,
+          firstRetainedMessageId: null,
+          modelState: {
+            format: 'e2e-provider/v1',
+            data: { opaque: 'e2e-state-1' },
+          },
+          usage: null,
         },
       },
     }),
@@ -154,7 +173,12 @@ async function main() {
         messages: [
           { id: 'e2e-stale-1', role: 'user', blocks: [{ type: 'text', text: 'x' }] },
         ],
-        modelState: null,
+        modelContext: {
+          checkpoint: null,
+          firstRetainedMessageId: null,
+          modelState: null,
+          usage: null,
+        },
       },
     }),
   });
@@ -164,8 +188,8 @@ async function main() {
   const loaded = await api(admin, `/ai/conversations/${conversationId}`);
   ok(loaded.status === 200 && loaded.body.context.messages.length === 2
       && loaded.body.context.messages[1].blocks[0].text === '设备运行正常'
-      && loaded.body.context.modelState.data.opaque === 'e2e-state-1',
-  '读回同一 revision 的完整消息与 ModelState');
+      && loaded.body.context.modelContext.modelState.data.opaque === 'e2e-state-1',
+  '读回同一 revision 的完整消息与 ModelContext');
 
   const listed = await api(admin, '/ai/conversations');
   ok(listed.body.conversations.some(c => c.conversationId === conversationId), '会话列表包含新会话');

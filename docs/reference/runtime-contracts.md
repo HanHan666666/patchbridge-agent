@@ -94,7 +94,13 @@ document.querySelector('patchbridge-agent').runtimeOptions = {
 直接构造 Runtime 是更低层的入口，不合并默认值；必须主动填齐五项：
 
 ```ts
+const contextManager = new DefaultContextManager(
+  new HttpContextCompactionGateway('/ai'),
+);
+await contextManager.loadConfiguration();
+
 const runtime = new DefaultAgentRuntime(model, {
+  contextManager,
   limits: {
     maxModelCalls: 8,
     maxToolCalls: 16,
@@ -139,7 +145,9 @@ Headless View 读取 `state.pendingConfirmation` 后调用 `approveTool()` 或 `
 都不会进入稳定消息。宿主不主动取消时，整体 `maxDurationMs` Deadline 使挂起操作以
 `AGENT_EXECUTION_TIMEOUT` 明确失败。
 
-会话 API 以 `ConversationContext { messages, modelState }` 为一个整体保存。刷新页面只恢复
+会话 API 以 `ConversationContext { messages, modelContext }` 为一个整体保存。`messages`
+始终是完整可见历史，自动或手动压缩只改变模型输入投影、检查点、usage 与对应的 Provider
+状态。刷新页面只恢复
 最后一次完整回合，不尝试恢复中断到一半的 Execution。这保持后端无 Agent Session，避免
 框架演化成分布式工作流引擎。
 
@@ -216,7 +224,13 @@ Responses API 时只新增 Provider Adapter，不需要修改 Controller、View 
 直接构造 `DefaultAgentRuntime` 时必须填齐五项 `limits`：
 
 ```ts
+const contextManager = new DefaultContextManager(
+  new HttpContextCompactionGateway('/ai'),
+);
+await contextManager.loadConfiguration();
+
 const runtime = new DefaultAgentRuntime(model, {
+  contextManager,
   limits: {
     maxModelCalls: 8,
     maxToolCalls: 16,
@@ -350,10 +364,10 @@ Hook 收到的是独立深冻结数据，不能改写真实 Tool 参数。
 
 ---
 
-## ConversationContext
+## ConversationContext 与模型工作上下文
 
 
-会话保存和读取以一个 revision 原子处理消息与 Provider 状态：
+会话保存和读取以一个 revision 原子处理完整消息与模型工作上下文：
 
 ```json
 {
@@ -361,10 +375,22 @@ Hook 收到的是独立深冻结数据，不能改写真实 Tool 参数。
   "revision": 3,
   "context": {
     "messages": [],
-    "modelState": null
+    "modelContext": {
+      "checkpoint": null,
+      "firstRetainedMessageId": null,
+      "modelState": null,
+      "usage": null
+    }
   }
 }
 ```
 
-服务端返回 `ConversationSnapshot { conversation, context }`。`modelState` 字段必须显式
-出现，值允许为 `null`。状态损坏或 revision 冲突必须明确失败，不能改用另一份历史数据。
+服务端返回 `ConversationSnapshot { conversation, context }`。`modelContext` 必须显式出现；
+检查点与保留边界成对出现，`modelState` 和 `usage` 可以显式为 `null`。状态损坏或 revision
+冲突必须明确失败，不能改用另一份历史数据。
+
+`ContextManager` 是自动阈值判断、Tool 安全切分、重复摘要、模型输入投影和 usage 推进的唯一
+业务入口。正常模型响应必须提供 Provider usage；成功压缩后的字符估算只作为下一次正常响应
+前的保守过渡值。达到服务端窗口的 80% 时 Runtime 先压缩再调用模型，失败时旧上下文保持
+不变且本轮不继续。完整规则见[上下文压缩指南](../guides/context-compaction.md)和
+[ADR-004](../architecture/adr/0004-context-compaction.md)。

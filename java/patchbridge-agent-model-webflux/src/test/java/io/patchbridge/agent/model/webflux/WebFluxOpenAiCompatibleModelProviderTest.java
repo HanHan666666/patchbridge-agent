@@ -82,7 +82,7 @@ class WebFluxOpenAiCompatibleModelProviderTest {
                                             "data:"
                                                 + " {\"choices\":[{\"delta\":{\"reasoning_content\":\"计划\"}}]}\n\n"
                                                 + "data:"
-                                                + " {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"local.echo\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                                                + " {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"local.echo\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n"
                                                 + "data: [DONE]\n\n"));
                         });
         RecordingListener listener = new RecordingListener();
@@ -286,7 +286,8 @@ class WebFluxOpenAiCompatibleModelProviderTest {
     void shouldIgnoreTransportFailureAfterProtocolCompletion() throws InterruptedException {
         String completed =
                 "data: {\"choices\":[{\"delta\":{\"content\":\"完成\"},"
-                        + "\"finish_reason\":\"stop\"}]}\n\n"
+                        + "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,"
+                        + "\"completion_tokens\":2,\"total_tokens\":7}}\n\n"
                         + "data: [DONE]\n\n";
         Flux<DataBuffer> body =
                 Flux.concat(

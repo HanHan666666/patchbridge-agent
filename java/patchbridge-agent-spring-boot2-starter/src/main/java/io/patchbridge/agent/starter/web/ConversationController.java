@@ -33,7 +33,7 @@ import java.util.Map;
 /**
  * Conversation API：持久化跨刷新和设备恢复所需的稳定 Agent 上下文。
  *
- * <p>GET 和 PUT 只接受厂商中立的 {@code context = messages + modelState}。保存使用整回合 全量替换和 revision 乐观锁，多窗口冲突以
+ * <p>GET 和 PUT 只接受厂商中立的 {@code context = messages + modelContext}。保存使用整回合 全量替换和 revision 乐观锁，多窗口冲突以
  * 409 暴露。ownerKey 始终来自服务端可信身份， 不进入请求或响应。
  */
 @RestController
@@ -76,7 +76,7 @@ public class ConversationController {
         this.listLimit = properties.getConversations().getListLimit();
     }
 
-    /** 查询当前归属主体可见的会话元数据列表，不返回 ModelState。 */
+    /** 查询当前归属主体可见的会话元数据列表，不返回 ModelContext。 */
     @GetMapping("/conversations")
     public Map<String, Object> list() {
         UserContext user = currentUser.requiredUser();
@@ -111,7 +111,7 @@ public class ConversationController {
         return body;
     }
 
-    /** 按 ownerKey 返回 revision、消息和 ModelState 属于同一数据库快照的详情。 */
+    /** 按 ownerKey 返回 revision、消息和 ModelContext 属于同一数据库快照的详情。 */
     @GetMapping("/conversations/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable("id") String id) {
         UserContext user = currentUser.requiredUser();
@@ -125,7 +125,7 @@ public class ConversationController {
         return ResponseEntity.ok(body);
     }
 
-    /** 使用乐观锁原子保存完整 messages + modelState 上下文。 */
+    /** 使用乐观锁原子保存完整 messages + modelContext 上下文。 */
     @PutMapping("/conversations/{id}")
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable("id") String id, @RequestBody ConversationSaveRequest request)
@@ -165,7 +165,7 @@ public class ConversationController {
         return ownerKey;
     }
 
-    /** 对外视图不回传 ownerKey 或 ModelState；它们不属于列表展示元数据。 */
+    /** 对外视图不回传 ownerKey 或 ModelContext；它们不属于列表展示元数据。 */
     private Map<String, Object> conversationView(Conversation conversation) {
         Map<String, Object> view = new LinkedHashMap<String, Object>();
         view.put("conversationId", conversation.getConversationId());

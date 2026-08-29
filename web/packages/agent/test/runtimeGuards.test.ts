@@ -30,6 +30,11 @@ import type {
   ToolCallResult,
   ToolDefinition,
 } from '../src/types';
+import {
+  TEST_MODEL_USAGE,
+  testContextManager,
+  testModelContext,
+} from './testContext';
 
 /** 测试默认预算足以运行普通脚本，单项边界由用例覆盖。 */
 const TEST_LIMITS: AgentExecutionLimits = Object.freeze({
@@ -237,7 +242,7 @@ class EmptyDeltaBurstModel implements Model {
       })),
       { type: 'block-delta', index: 0, delta: { type: 'text', text: '完成' } },
       { type: 'block-stop', index: 0 },
-      { type: 'message-stop', stopReason: 'end-turn', usage: null, modelState: null },
+      { type: 'message-stop', stopReason: 'end-turn', usage: TEST_MODEL_USAGE, modelState: null },
     ];
     const owner = this;
     return {
@@ -280,6 +285,7 @@ function runtime(
   let id = 0;
   return new DefaultAgentRuntime(model, {
     limits: limits(options.limits),
+    contextManager: testContextManager(),
     hooks: options.hooks,
     now: options.now,
     onHookError: options.onHookError,
@@ -333,7 +339,7 @@ function input(
   messages: readonly AgentMessage[] = [userMessage()],
 ): AgentRunInput {
   return {
-    conversation: { messages, modelState: null },
+    conversation: { messages, modelContext: testModelContext() },
     toolSnapshot: snapshot,
     conversationId: 'conversation-guards',
     traceId: 'trace-guards',
@@ -358,7 +364,7 @@ function textResponse(
     { type: 'block-start', index: 0, block: { type: 'text' } },
     { type: 'block-delta', index: 0, delta: { type: 'text', text } },
     { type: 'block-stop', index: 0 },
-    { type: 'message-stop', stopReason, usage: null, modelState: null },
+    { type: 'message-stop', stopReason, usage: TEST_MODEL_USAGE, modelState: null },
   ];
 }
 
@@ -383,7 +389,7 @@ function toolResponse(
   events.push({
     type: 'message-stop',
     stopReason: 'tool-use',
-    usage: null,
+    usage: TEST_MODEL_USAGE,
     modelState: null,
   });
   return events;
@@ -415,12 +421,14 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
   ] as const)('直接构造 Runtime 时拒绝非法完整预算 %s=%s', (name, value) => {
     expect(() => new DefaultAgentRuntime(new QueueModel([]), {
       limits: { ...TEST_LIMITS, [name]: value },
+      contextManager: testContextManager(),
     })).toThrow(`${name} 必须是安全正整数`);
   });
 
   it('拒绝浏览器 setTimeout 无法准确表达的 Execution 时长', () => {
     expect(() => new DefaultAgentRuntime(new QueueModel([]), {
       limits: { ...TEST_LIMITS, maxDurationMs: 2_147_483_648 },
+      contextManager: testContextManager(),
     })).toThrow('maxDurationMs 超出浏览器定时器支持范围');
   });
 

@@ -286,7 +286,8 @@ class OpenAiCompatibleModelProviderTest {
     void transportFailureAfterProtocolCompletionIsIgnored() throws Exception {
         String completed =
                 "data: {\"choices\":[{\"delta\":{\"content\":\"完成\"},"
-                        + "\"finish_reason\":\"stop\"}]}\n\n"
+                        + "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,"
+                        + "\"completion_tokens\":2,\"total_tokens\":7}}\n\n"
                         + "data: [DONE]\n\n";
         server.enqueue(
                 new MockResponse()

@@ -21,9 +21,9 @@ unsubscribe();
 controller.dispose();
 ~~~
 
-subscribe 注册后立即推送当前不可变快照。View 只调用 Controller 意图，不直接调用 Runtime、ModelClient、ToolClient 或 ConversationClient。
+subscribe 注册后立即推送当前不可变快照。View 只调用 Controller 意图，不直接调用 Runtime、ModelClient、ToolClient、ConversationClient 或 ContextManager。
 
-内置 HTTP Client 在边界校验响应形状：会话对象的 <code>conversationId/revision/status</code> 与时间戳字段、详情响应的 <code>context.messages</code>/<code>modelState</code> 必须符合契约类型，否则以明确的 invalid state 错误失败，不进入 Controller 状态与渲染。Widget 渲染会话列表时对所有来自响应的字符串（含 <code>conversationId</code>）做 HTML 实体转义，伪造 id 无法逃逸属性插值。
+内置 HTTP Client 在边界校验响应形状：会话对象的 <code>conversationId/revision/status</code> 与时间戳字段、详情响应的 <code>context.messages</code>/<code>modelContext</code> 必须符合契约类型，否则以明确的 invalid state 错误失败，不进入 Controller 状态与渲染。`modelContext` 的检查点/保留边界必须成对出现，usage 来源和所有计量字段也会严格校验。Widget 渲染会话列表时对所有来自响应的字符串（含 <code>conversationId</code>）做 HTML 实体转义，伪造 id 无法逃逸属性插值。
 
 ### Controller 公共意图
 
@@ -33,6 +33,7 @@ subscribe 注册后立即推送当前不可变快照。View 只调用 Controller
 - <code>initialize()/refreshConversations()/loadConversation()</code>；
 - <code>startNewConversation()/deleteConversation()</code>；
 - <code>sendMessage(text, images)</code>；
+- <code>compactContext()</code>：仅空闲、有 usage 且存在安全历史前缀时手动压缩；
 - <code>approveTool()/rejectTool()/abort()/dispose()</code>；
 - <code>getToolRegistry()/getToolInspectionSource()/getCallTraceSource()</code>；
 - <code>registerTool()</code>。
@@ -60,10 +61,25 @@ Navigation 和 Run 使用独立取消与 generation；旧请求、旧 Execution 
 | <code>toolClient</code> | 替换后端 Tool Client |
 | <code>toolRegistry</code> | 完整替换 Registry；不能与 toolClient 同时提供 |
 | <code>conversationClient</code> | 替换会话 Client |
+| <code>contextCompactionGateway</code> | 替换模型配置与压缩 HTTP Adapter；自动与手动路径仍共享默认 ContextManager |
 | <code>storageKey</code> | 上次会话 localStorage key；默认 <code>patchbridge-agent:last-conversation</code> |
 | <code>callTrace</code> | 调用轨迹采集配置；缺省不采集（不创建采集 Hook、不访问 localStorage）。<code>{ mode: 'memory' }</code> 仅当前页内存；<code>{ mode: 'persistent' }</code> 终态写入 localStorage，可用 <code>storageKey</code> 指定键前缀（默认 <code>patchbridge-agent:call-trace</code>） |
 
 默认 storageKey 不包含用户身份。共享浏览器环境应由宿主提供按应用和用户隔离的 key；这只是 UX/隐私隔离，服务端 owner 校验仍是安全边界。
+
+### 上下文压缩状态
+
+`AgentState` 始终包含：
+
+- `messages`：完整可见历史，压缩不删除；
+- `modelContext`：检查点、第一条保留消息引用、Provider 私有状态和当前 usage；
+- `contextConfiguration`：服务端窗口、80% 阈值和近期预算，初始化前为 `null`；
+- `contextWindow`：`currentTokens/source/percentage/compactable` 的 View 投影；
+- `status='compacting-context'`：自动或手动摘要正在执行。
+
+正常模型响应必须提供 Provider usage。成功压缩后 `contextWindow.source='estimated'`，下一次
+正常模型响应后恢复为 `provider`。压缩或手动会话保存失败不会提交候选 `modelContext`。
+切分、重复摘要和 Tool 原子边界见[上下文压缩指南](../guides/context-compaction.md)。
 
 <code>createAgentController()</code> 中的 <code>runtime.limits</code> 是部分覆盖，只需写需要调整的字段：
 
@@ -161,7 +177,7 @@ widget.runtimeOptions = {
 Widget 提供三层稳定入口：
 
 1. <code>--patchbridge-agent-*</code> CSS Variables 调整颜色、字体、间距、尺寸和圆角；
-2. <code>::part()</code> 覆盖 panel、header、message、composer、input、send-button、reasoning、max-tokens-notice 等语义节点；
+2. <code>::part()</code> 覆盖 panel、header、context-panel、context-badge、context-details、context-compact-button、message、composer、input、send-button、reasoning、max-tokens-notice 等语义节点；
 3. <code>theme="none"</code> 移除参考视觉主题。
 
 不要依赖 Shadow DOM 内部 class。需要改变 DOM 或交互结构时，使用 Headless Controller 自建 View。

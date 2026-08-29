@@ -30,7 +30,7 @@ export interface AssembledModelMessage {
   readonly modelState: ModelState | null;
   /** Provider 标准化的停止原因。 */
   readonly stopReason: ModelStopReason;
-  /** 可选用量；Runtime 不据此改变执行语义。 */
+  /** Provider 用量；null 只保留到 ContextManager 执行必需契约校验。 */
   readonly usage: ModelUsage | null;
 }
 
@@ -65,7 +65,7 @@ type BlockAggregation = TextLikeAggregation | ToolCallAggregation;
 interface MessageStopAggregation {
   /** 模型停止原因。 */
   readonly stopReason: ModelStopReason;
-  /** 可选 token 用量。 */
+  /** Provider token 用量；缺失值会在稳定上下文提交前失败。 */
   readonly usage: ModelUsage | null;
   /** 下一份 Provider ModelState。 */
   readonly modelState: ModelState | null;

@@ -1,6 +1,5 @@
 package io.patchbridge.agent.starter.web.dto;
 
-import io.patchbridge.agent.core.conversation.ConversationContext;
 import io.patchbridge.agent.core.conversation.ConversationContextValues;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelToolDefinition;
@@ -78,11 +77,6 @@ public class ModelStreamEnvelope {
             if (maxTokens != null && maxTokens.intValue() <= 0) {
                 throw new IllegalArgumentException("maxTokens 必须大于 0");
             }
-            Map<String, Object> contextValue = new LinkedHashMap<String, Object>();
-            contextValue.put("messages", messages);
-            contextValue.put("modelState", modelState);
-            ConversationContext context = ConversationContextValues.fromValue(contextValue);
-
             List<ModelToolDefinition> mappedTools = new ArrayList<ModelToolDefinition>();
             for (int index = 0; index < tools.size(); index += 1) {
                 Tool tool = tools.get(index);
@@ -94,9 +88,9 @@ public class ModelStreamEnvelope {
             return new ModelRequest(
                     responseMessageId,
                     model,
-                    context.getMessages(),
+                    ConversationContextValues.fromMessagesValue(messages),
                     mappedTools,
-                    context.getModelState(),
+                    ConversationContextValues.fromModelStateValue(modelState),
                     temperature,
                     maxTokens);
         }

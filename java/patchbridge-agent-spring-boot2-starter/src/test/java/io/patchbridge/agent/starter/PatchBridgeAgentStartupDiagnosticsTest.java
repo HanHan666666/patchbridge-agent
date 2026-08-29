@@ -5,6 +5,7 @@ import io.patchbridge.agent.core.auth.ToolAccessPolicy;
 import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.model.ModelCall;
 import io.patchbridge.agent.core.model.ModelProvider;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStreamListener;
 import io.patchbridge.agent.core.tool.ToolDefinition;
@@ -53,7 +54,8 @@ class PatchBridgeAgentStartupDiagnosticsTest {
                     "spring.datasource.url=jdbc:h2:mem:diagnostics;DB_CLOSE_DELAY=-1",
                     "spring.datasource.driver-class-name=org.h2.Driver",
                     "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                    "patchbridge-agent.model.model=fake-model");
+                    "patchbridge-agent.model.model=fake-model",
+                    "patchbridge-agent.model.context-window-tokens=128000");
 
     /** 默认实现全部装配且缺少部署条件配置时，三条编号 WARN 都必须出现。 */
     @Test
@@ -81,6 +83,10 @@ class PatchBridgeAgentStartupDiagnosticsTest {
     @Test
     void customModelProviderSuppressesModelWarning(CapturedOutput output) {
         runner.withBean("hostModelProvider", ModelProvider.class, StubModelProvider::new)
+                .withBean(
+                        "hostModelStateProjector",
+                        ModelStateProjector.class,
+                        () -> (state, retainedMessages) -> state)
                 .run(context -> assertFalse(output.toString().contains("PBA-CFG-001")));
     }
 

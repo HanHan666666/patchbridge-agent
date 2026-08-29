@@ -27,6 +27,10 @@ describe('Widget 公共样式契约', () => {
     const requiredParts = [
       'panel',
       'header',
+      'context-panel',
+      'context-badge',
+      'context-details',
+      'context-compact-button',
       'conversation-list',
       'messages',
       'message',
@@ -62,6 +66,7 @@ describe('Widget 公共样式契约', () => {
       '--patchbridge-agent-panel-width',
       '--patchbridge-agent-panel-height',
       '--patchbridge-agent-panel-min-height',
+      '--patchbridge-agent-shadow-popover',
     ];
 
     for (const token of requiredTokens) {

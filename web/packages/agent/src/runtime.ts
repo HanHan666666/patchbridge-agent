@@ -20,6 +20,7 @@ import type {
   ModelStreamEvent,
   ModelToolDefinition,
 } from './clients/modelClient';
+import type { ContextManager } from './contextManager';
 import {
   ModelMessageAssembler,
   type AssembledModelMessage,
@@ -43,6 +44,7 @@ import type {
   AgentMessage,
   AgentRunOutcome,
   JsonObject,
+  ModelContext,
   ModelState,
   ToolCallBlock,
   ToolCallResult,
@@ -51,7 +53,10 @@ import type {
 import {
   copyAndFreezeJsonObject,
 } from './jsonValues';
-import { snapshotAgentMessage, snapshotModelState } from './messageValues';
+import {
+  snapshotAgentMessage,
+  snapshotModelContext,
+} from './messageValues';
 
 /** Runtime 生成稳定标识时使用的业务命名空间。 */
 export type RuntimeIdKind = 'message' | 'interrupt';
@@ -88,6 +93,8 @@ export const DEFAULT_AGENT_EXECUTION_LIMITS: AgentExecutionLimits = Object.freez
 export interface DefaultAgentRuntimeOptions {
   /** 直接构造 Runtime 时必须完整提供的执行资源预算。 */
   readonly limits: AgentExecutionLimits;
+  /** 自动压缩、工作消息构造与 Provider 用量推进的唯一上下文管理器。 */
+  readonly contextManager: ContextManager;
   /** 可选标识生成器；测试和需要自定义追踪格式的宿主可注入。 */
   readonly createId?: (kind: RuntimeIdKind) => string;
   /** 可选单调毫秒时钟；共同用于绝对 Deadline、首 token 延迟与输出速度采样。 */
@@ -153,6 +160,8 @@ export class DefaultAgentRuntime implements AgentEngine {
   private readonly model: Model;
   /** 构造期校验并冻结的完整执行资源预算。 */
   private readonly limits: AgentExecutionLimits;
+  /** 与 Controller 手动压缩共享同一配置和边界规则的上下文管理器。 */
+  private readonly contextManager: ContextManager;
   /** 稳定标识生成器。 */
   private readonly createId: (kind: RuntimeIdKind) => string;
   /** 模型性能指标使用的单调毫秒时钟。 */
@@ -179,6 +188,10 @@ export class DefaultAgentRuntime implements AgentEngine {
       throw new Error('Runtime options 不可为空');
     }
     this.model = model;
+    if (options.contextManager == null) {
+      throw new Error('contextManager 不可为空');
+    }
+    this.contextManager = options.contextManager;
     this.limits = snapshotExecutionLimits(options.limits);
     this.createId = options.createId ?? defaultRuntimeId;
     this.now = options.now ?? defaultRuntimeNow;
@@ -205,6 +218,7 @@ export class DefaultAgentRuntime implements AgentEngine {
       input,
       listener,
       this.limits,
+      this.contextManager,
       this.createId,
       this.now,
       this.hooks,
@@ -242,8 +256,8 @@ class DefaultAgentExecution implements AgentExecution {
   private readonly invokeTool: ToolCallNext;
   /** 本轮已经通过完整预检并稳定提交的消息。 */
   private readonly stableMessages: AgentMessage[] = [];
-  /** 与 stableMessages 严格对应的最新 Provider 状态。 */
-  private stableModelState: ModelState | null;
+  /** 与完整 working 消息严格对应的当前模型工作上下文。 */
+  private stableModelContext: ModelContext;
   /** 输入上下文与本次 Execution 已接受的全部 Tool Call ID。 */
   private readonly acceptedToolCallIds = new Set<string>();
   /** 本次 Execution 已通过整批预检的 Tool Call 数量。 */
@@ -276,6 +290,7 @@ class DefaultAgentExecution implements AgentExecution {
     private readonly input: AgentRunInput,
     private readonly listener: (event: AgentExecutionEvent) => void,
     private readonly limits: AgentExecutionLimits,
+    private readonly contextManager: ContextManager,
     private readonly createId: (kind: RuntimeIdKind) => string,
     private readonly now: () => number,
     private readonly hooks: readonly AgentHook[],
@@ -297,7 +312,7 @@ class DefaultAgentExecution implements AgentExecution {
     if (!Number.isFinite(this.deadlineAt)) {
       throw new Error('Runtime Deadline 必须是有限毫秒值');
     }
-    this.stableModelState = snapshotModelState(input.conversation.modelState);
+    this.stableModelContext = snapshotModelContext(input.conversation.modelContext);
     this.invokeTool = composeToolInterceptors(
       toolInterceptors,
       invocation => this.input.toolSnapshot.invoke(
@@ -457,6 +472,38 @@ class DefaultAgentExecution implements AgentExecution {
       if (!this.isRunning()) {
         return this.snapshotResult({ type: 'cancelled' });
       }
+      this.requireWithinDeadline();
+      const pendingConversation = {
+        messages: working,
+        modelContext: this.stableModelContext,
+      };
+      const requiresCompaction = this.contextManager.requiresAutomaticCompaction(
+        pendingConversation,
+      );
+      if (requiresCompaction) {
+        this.publishEvent({ type: 'status', status: 'compacting-context' });
+      }
+      const preparedContext = requiresCompaction
+        ? await this.contextManager.prepareForModelCall({
+          conversation: pendingConversation,
+          callContext: {
+            traceId: this.input.traceId,
+            conversationId: this.input.conversationId,
+          },
+          signal,
+        })
+        : {
+          conversation: pendingConversation,
+          modelMessages: this.contextManager.buildModelMessages(pendingConversation),
+        };
+      if (!this.isRunning()) {
+        return this.snapshotResult({ type: 'cancelled' });
+      }
+      this.stableModelContext = snapshotModelContext(
+        preparedContext.conversation.modelContext,
+      );
+      // 摘要调用有独立服务端审计；普通模型性能计时必须从压缩完成后开始，
+      // 否则首 token 延迟会混入另一笔模型调用的耗时。
       const modelCallStartedAt = this.requireWithinDeadline();
       const responseMessageId = this.nextId('message');
       this.publishHook({
@@ -467,15 +514,14 @@ class DefaultAgentExecution implements AgentExecution {
       if (!this.isRunning()) {
         return this.snapshotResult({ type: 'cancelled' });
       }
-      this.requireWithinDeadline();
       this.publishEvent({ type: 'status', status: 'streaming' });
       if (!this.isRunning()) {
         return this.snapshotResult({ type: 'cancelled' });
       }
       this.requireWithinDeadline();
       const streamed = await this.streamModel(
-        working,
-        this.stableModelState,
+        preparedContext.modelMessages,
+        this.stableModelContext.modelState,
         responseMessageId,
         tools,
         signal,
@@ -489,9 +535,19 @@ class DefaultAgentExecution implements AgentExecution {
       const assistantMessage = snapshotAgentMessage(assembled.message);
       const preparedTools = this.prepareToolBatch(assistantMessage, modelCall);
 
-      this.stableModelState = snapshotModelState(assembled.modelState);
       this.stableMessages.push(assistantMessage);
       working.push(assistantMessage);
+      this.stableModelContext = snapshotModelContext(
+        this.contextManager.recordModelResponse(
+          {
+            messages: working,
+            modelContext: this.stableModelContext,
+          },
+          assistantMessage,
+          assembled.usage,
+          assembled.modelState,
+        ).modelContext,
+      );
       this.publishHook({
         type: 'model-call-completed',
         callIndex: modelCall,
@@ -774,7 +830,7 @@ class DefaultAgentExecution implements AgentExecution {
     this.publishEvent({
       type: 'messages',
       messages: [...this.stableMessages],
-      modelState: this.stableModelState,
+      modelContext: snapshotModelContext(this.stableModelContext),
     });
   }
 
@@ -853,11 +909,11 @@ class DefaultAgentExecution implements AgentExecution {
     return Object.freeze(prepared);
   }
 
-  /** 用稳定消息与 ModelState 快照创建不可由宿主改写的最终结果。 */
+  /** 用稳定消息与模型工作上下文快照创建不可由宿主改写的最终结果。 */
   private snapshotResult(outcome: AgentRunOutcome): AgentRunResult {
     return Object.freeze({
       messages: Object.freeze([...this.stableMessages]),
-      modelState: this.stableModelState,
+      modelContext: snapshotModelContext(this.stableModelContext),
       outcome: Object.freeze({ ...outcome }) as AgentRunOutcome,
     });
   }

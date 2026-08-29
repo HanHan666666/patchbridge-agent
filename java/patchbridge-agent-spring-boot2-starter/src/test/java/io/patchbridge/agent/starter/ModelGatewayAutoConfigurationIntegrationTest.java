@@ -19,6 +19,7 @@ import io.patchbridge.agent.core.model.ModelProvider;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.TextBlock;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -68,10 +69,14 @@ class ModelGatewayAutoConfigurationIntegrationTest {
                             ConversationRepository.class,
                             () -> mock(ConversationRepository.class))
                     .withBean(AuditSink.class, () -> mock(AuditSink.class))
+                    .withBean(
+                            ModelStateProjector.class,
+                            () -> (state, retainedMessages) -> state)
                     .withPropertyValues(
                             "patchbridge-agent.mcp.enabled=false",
                             "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                            "patchbridge-agent.model.model=test-model");
+                            "patchbridge-agent.model.model=test-model",
+                            "patchbridge-agent.model.context-window-tokens=128000");
 
     /** 引入 Starter 后应只有一个公共 ModelGateway，且默认实现来自不依赖 Spring 的 Core。 */
     @Test

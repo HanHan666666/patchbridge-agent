@@ -12,7 +12,7 @@ import type {
   ConversationContext,
   JsonObject,
   JsonValue,
-  ModelState,
+  ModelContext,
   ToolDefinition,
 } from './types';
 
@@ -45,7 +45,7 @@ export type AgentExecutionEvent =
       /** Runtime 阶段变化事件。 */
       readonly type: 'status';
       /** 仅包含 Engine 自己能够确认的运行阶段。 */
-      readonly status: 'streaming' | 'calling-tool';
+      readonly status: 'compacting-context' | 'streaming' | 'calling-tool';
     }
   | {
       /** 可立即展示的 Assistant 正文增量。 */
@@ -87,7 +87,7 @@ export type AgentExecutionEvent =
       /** 仅包含本轮新增消息的不可变快照。 */
       readonly messages: readonly AgentMessage[];
       /** 与消息快照严格对应的最新 Provider 状态。 */
-      readonly modelState: ModelState | null;
+      readonly modelContext: ModelContext;
     }
   | {
       /** Execution 等待宿主响应的 Human-in-the-loop 事件。 */
@@ -98,7 +98,7 @@ export type AgentExecutionEvent =
 
 /** 一次 Agent Run 的输入；所有可变外部能力都在开始时冻结。 */
 export interface AgentRunInput {
-  /** 包含本轮用户消息和上一份 ModelState 的完整上下文。 */
+  /** 包含本轮用户消息和上一份 ModelContext 的完整上下文。 */
   readonly conversation: ConversationContext;
   /** 定义与执行器属于同一 revision 的唯一 Tool 快照。 */
   readonly toolSnapshot: ToolRegistrySnapshot;
@@ -112,8 +112,8 @@ export interface AgentRunInput {
 export interface AgentRunResult {
   /** 本轮新增且已经完成的稳定消息。 */
   readonly messages: readonly AgentMessage[];
-  /** 最后一次已完成模型调用返回的 Provider 续接状态。 */
-  readonly modelState: ModelState | null;
+  /** 最后一次已完成模型调用对应的模型工作上下文。 */
+  readonly modelContext: ModelContext;
   /** 成功、输出截断与主动取消互斥的统一终态。 */
   readonly outcome: AgentRunOutcome;
 }

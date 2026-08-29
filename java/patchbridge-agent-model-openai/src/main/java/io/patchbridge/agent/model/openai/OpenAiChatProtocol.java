@@ -62,6 +62,9 @@ public final class OpenAiChatProtocol {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("model", model);
         body.put("stream", Boolean.TRUE);
+        body.put(
+                "stream_options",
+                Collections.<String, Object>singletonMap("include_usage", Boolean.TRUE));
         List<Map<String, Object>> messages = new ArrayList<Map<String, Object>>();
         for (AgentMessage message : request.getMessages()) {
             encodeMessage(message, incomingReasoning, retainedReasoning, messages);
@@ -86,6 +89,26 @@ public final class OpenAiChatProtocol {
     /** 创建本次上游流的有状态解码器。 */
     public Decoder decoder(ModelRequest request, Map<String, String> retainedReasoning) {
         return new Decoder(json, request.getResponseMessageId(), retainedReasoning);
+    }
+
+    /**
+     * 把当前 Provider 状态投影到明确保留的真实消息。
+     *
+     * <p>状态格式不兼容或数据损坏继续显式失败；空投影返回 null，不制造空壳状态。
+     */
+    public ModelState projectState(ModelState state, List<AgentMessage> retainedMessages) {
+        if (retainedMessages == null || retainedMessages.contains(null)) {
+            throw new ModelGatewayException("状态投影消息不可为空或包含 null", false);
+        }
+        Map<String, String> incoming = readReasoningState(state);
+        Map<String, String> retained = new LinkedHashMap<String, String>();
+        for (AgentMessage message : retainedMessages) {
+            String reasoning = incoming.get(message.getId());
+            if (reasoning != null) {
+                retained.put(message.getId(), reasoning);
+            }
+        }
+        return retained.isEmpty() ? null : Decoder.nextState(retained);
     }
 
     /** 编码一条领域消息；工具角色可能展开为多条目标协议消息。 */
@@ -387,6 +410,11 @@ public final class OpenAiChatProtocol {
             }
             if (finishReason == null) {
                 throw protocolFailure("模型流结束但缺少 finish_reason", null);
+            }
+            if (usage == null) {
+                throw protocolFailure(
+                        "模型流结束但缺少 usage；请确认上游支持 stream_options.include_usage",
+                        null);
             }
             closeSerialBlock(listener);
             flushTools(listener);

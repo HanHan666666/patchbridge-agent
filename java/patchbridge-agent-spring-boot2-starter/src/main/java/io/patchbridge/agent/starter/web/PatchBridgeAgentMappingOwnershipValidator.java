@@ -23,11 +23,12 @@ import java.util.Set;
  */
 public final class PatchBridgeAgentMappingOwnershipValidator implements SmartInitializingSingleton {
 
-    /** 允许占用独占命名空间的五类公共 Starter Controller。 */
+    /** 允许占用独占命名空间的公共 Starter Controller。 */
     private static final List<Class<?>> ALLOWED_CONTROLLER_TYPES = Collections.unmodifiableList(
             Arrays.<Class<?>>asList(
                     ToolGatewayController.class,
                     ModelStreamController.class,
+                    ContextCompactionController.class,
                     ConversationController.class,
                     AdminApiController.class,
                     McpAdminController.class));
@@ -76,7 +77,7 @@ public final class PatchBridgeAgentMappingOwnershipValidator implements SmartIni
                         + String.join("; ", sortedConflicts));
     }
 
-    /** 判断 Controller 用户类是否属于五类公共契约或其合法子类。 */
+    /** 判断 Controller 用户类是否属于公共契约或其合法子类。 */
     private static boolean isAllowedControllerType(Class<?> controllerType) {
         for (Class<?> allowedType : ALLOWED_CONTROLLER_TYPES) {
             if (allowedType.isAssignableFrom(controllerType)) {

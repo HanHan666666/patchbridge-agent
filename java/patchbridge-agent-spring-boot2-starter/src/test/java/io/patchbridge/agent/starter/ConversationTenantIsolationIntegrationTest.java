@@ -40,6 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
             "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
             "patchbridge-agent.model.base-url=http://localhost:0/v1",
             "patchbridge-agent.model.model=fake-model",
+            "patchbridge-agent.model.context-window-tokens=128000",
             "patchbridge-agent.mcp.enabled=false"
         })
 @AutoConfigureMockMvc
@@ -84,8 +85,11 @@ class ConversationTenantIsolationIntegrationTest {
                                             + "\"messages\":[{\"id\":\"tenant-a-message\","
                                             + "\"role\":\"user\",\"blocks\":[{\"type\":\"text\",\"text\":\"租户"
                                             + " A 私有消息\"}]}],"
+                                            + "\"modelContext\":{\"checkpoint\":null,"
+                                            + "\"firstRetainedMessageId\":null,"
                                             + "\"modelState\":{\"format\":\"tenant-test/v1\","
-                                            + "\"data\":{\"secret\":\"tenant-a-state\"}}}}"))
+                                            + "\"data\":{\"secret\":\"tenant-a-state\"}},"
+                                            + "\"usage\":null}}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversation.revision").value(1));
 
@@ -100,7 +104,10 @@ class ConversationTenantIsolationIntegrationTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"revision\":1,\"context\":{"
-                                                + "\"messages\":[],\"modelState\":null}}"))
+                                                + "\"messages\":[],\"modelContext\":{"
+                                                + "\"checkpoint\":null,"
+                                                + "\"firstRetainedMessageId\":null,"
+                                                + "\"modelState\":null,\"usage\":null}}}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("CONVERSATION_NOT_FOUND"));
         mockMvc.perform(delete("/ai/conversations/" + conversationId))
@@ -112,7 +119,8 @@ class ConversationTenantIsolationIntegrationTest {
                 .andExpect(jsonPath("$.conversation.title").value("租户 A 会话"))
                 .andExpect(jsonPath("$.conversation.revision").value(1))
                 .andExpect(jsonPath("$.context.messages[0].blocks[0].text").value("租户 A 私有消息"))
-                .andExpect(jsonPath("$.context.modelState.data.secret").value("tenant-a-state"));
+                .andExpect(jsonPath("$.context.modelContext.modelState.data.secret")
+                        .value("tenant-a-state"));
     }
 
     /** 把租户放入认证 details，模拟宿主安全体系解析出的可信租户。 */

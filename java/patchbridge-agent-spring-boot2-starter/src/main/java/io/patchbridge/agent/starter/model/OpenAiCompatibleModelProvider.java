@@ -4,7 +4,10 @@ import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.model.ModelCall;
 import io.patchbridge.agent.core.model.ModelProvider;
 import io.patchbridge.agent.core.model.ModelRequest;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.model.openai.OpenAiChatProtocol;
 import io.patchbridge.agent.starter.PatchBridgeAgentProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -20,6 +23,7 @@ import okhttp3.sse.EventSourceListener;
 import okhttp3.sse.EventSources;
 
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -32,7 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>不使用类型化厂商 SDK，是为了完整保留 compatible 网关的扩展字段； 默认选用 OkHttp 3.14 是为了继续支持 Java 8。需要 Reactor Netty
  * 的宿主可通过 独立 WebFlux Adapter 提供同一 ModelProvider SPI，而无需改变 Core 或浏览器协议。
  */
-public class OpenAiCompatibleModelProvider implements ModelProvider {
+public class OpenAiCompatibleModelProvider implements ModelProvider, ModelStateProjector {
 
     /** 线程安全 JSON 编解码器，供协议边界并发复用。 */
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -197,6 +201,12 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                 }
             }
         };
+    }
+
+    /** 由 OpenAI Chat 协议内核严格投影 reasoningByMessageId。 */
+    @Override
+    public ModelState project(ModelState state, List<AgentMessage> retainedMessages) {
+        return protocol.projectState(state, retainedMessages);
     }
 
     /** 把协议内核产出的 Map 请求体序列化为上游 JSON（协议字段由内核独占）。 */

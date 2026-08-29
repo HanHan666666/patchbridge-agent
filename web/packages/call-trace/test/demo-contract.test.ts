@@ -66,6 +66,10 @@ describe('调用轨迹 Demo 装配契约', () => {
     }
   });
 
+  it('Demo 为连续 Tool 链路提供 30 次模型调用预算', () => {
+    expect(index).toContain('limits: { maxModelCalls: 30 }');
+  });
+
   it('Starter 资源目录包含构建后的 Call Trace bundle', () => {
     const asset = new URL(
       '../../../../java/patchbridge-agent-spring-boot2-starter/src/main/resources/META-INF/patchbridge-agent/patchbridge-agent-call-trace.js',

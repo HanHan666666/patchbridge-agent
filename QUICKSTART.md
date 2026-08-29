@@ -41,6 +41,8 @@ export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
 # 模型地址和名称必须显式配置；API Key 是否必需由目标网关决定
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
 export PATCHBRIDGE_AGENT_MODEL='your-model'
+# 必须与所选模型的真实上下文窗口一致
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
 # export PATCHBRIDGE_AGENT_MODEL_API_KEY='<目标网关 API Key，仅在需要时取消注释>'
 # 先安装当前多模块 Reactor，避免 Demo 误用本机仓库中的旧 SNAPSHOT
 mvn install -DskipTests
@@ -86,6 +88,7 @@ patchbridge-agent:
     base-url: https://api.your-llm.com/v1     # OpenAI-compatible
     model: your-model
     api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY} # 环境变量注入，浏览器永远拿不到
+    context-window-tokens: 128000 # 必须与所选模型真实窗口一致
   mcp:
     # 默认 properties：配置只读，不与 JDBC 数据合并
     source: properties
@@ -122,6 +125,7 @@ patchbridge-agent:
 配置在绑定或默认 Bean 构造阶段严格校验，不会把拼写错误静默转成另一种行为：
 
 - 默认模型 `base-url` 必须是无 user-info、query、fragment 的绝对 HTTP(S) 地址；
+- 模型 `context-window-tokens` 必须显式配置为安全正整数；自动压缩固定在 80% 触发；
 - `conversations.list-limit` 和 `audit.summary-max-length` 必须大于 0；
 - `audit.payload-mode` 只接受 `full`、`metadata-only`、`none`；
 - `mcp.source` 只接受 `properties` 或 `jdbc`，二者不合并；
@@ -145,7 +149,7 @@ public ConversationOwnerResolver conversationOwnerResolver() {
 框架将返回值作为不透明 `ownerKey` 贯穿全部会话读写，不解释租户业务规则。
 tenantId 必须来自 `CurrentUserProvider` 解析的服务端可信登录态，不能取自请求参数。
 
-> 当前唯一 Schema 使用 `owner_key`、`blocks_json` 和 `model_state_json`。项目尚未发布，
+> 当前唯一 Schema 使用 `owner_key`、`blocks_json` 和 `model_context_json`。项目尚未发布，
 > 不提供其他数据库结构的迁移或双写逻辑。本地开发数据库若不是当前结构，停止 Demo 后
 > 直接重建；宿主首次集成时用自己的 Flyway / Liquibase 按当前建表脚本创建结构。
 
@@ -174,6 +178,10 @@ public String restart(@AiParam(name = "sn", value = "设备序列号", required 
 <script src="/ai/assets/patchbridge-agent.js"></script>
 <patchbridge-agent endpoint="/ai" title="AI 助手"></patchbridge-agent>
 ```
+
+Widget 顶栏会显示模型上下文占比，并在 80% 时自动压缩；空闲且存在安全历史前缀时也可
+点击“立即压缩”。压缩不会删除完整聊天历史。配置与验证见
+[《使用上下文压缩》](docs/guides/context-compaction.md)。
 
 需要自定义 UI 时，直接使用 `@patchbridge-agent/agent` 包的 Controller 契约（Web Component 只是默认 View）：
 
@@ -231,7 +239,7 @@ const controller = createAgentController({
 
 ```js
 document.querySelector('patchbridge-agent').runtimeOptions = {
-  maxModelCalls: 8,
+  limits: { maxModelCalls: 8 },
   hooks: [{ onEvent: event => console.debug(event.type) }],
 };
 ```
@@ -287,8 +295,8 @@ public AdminAccessPolicy adminAccessPolicy() {
 | 套件 | 命令 | 规模 |
 | --- | --- | --- |
 | Java 单元 / 集成测试 | `mvn clean test`（java/ 下） | 覆盖 Core 管线 / JDBC 隔离与凭据加密 / MCP 并发与动态配置 / Starter 安全 / 异步模型 / WebFlux Adapter |
-| 前端单元测试 | `npm run test`（web/ 下） | 覆盖结构化 SSE / ContentBlock / ModelState / AgentExecution / HITL / Hook 与 Interceptor / 显式状态机 / HttpTransport / Unified Registry / WebMCP / Widget / Inspector / Call Trace 采集、持久化与组件契约 |
-| API E2E（Node） | `node web/tools/e2e-api-test.mjs`（Demo 运行中） | 16 项 API、安全与资源断言 |
+| 前端单元测试 | `npm run test`（web/ 下） | 覆盖结构化 SSE / ContentBlock / ModelContext / 自动与手动压缩 / AgentExecution / HITL / Hook 与 Interceptor / 显式状态机 / HttpTransport / Unified Registry / WebMCP / Widget / Inspector / Call Trace 采集、持久化与组件契约 |
+| API E2E（Node） | `node web/tools/e2e-api-test.mjs`（Demo 运行中） | 18 项 API、安全、模型窗口与资源断言 |
 | 真实模型浏览器 E2E | `node web/tools/e2e-real-llm-test.mjs`（已配置真实模型的 Demo 运行中） | 覆盖工具决策、多模态识图和可观察时的取消路径 |
 
 浏览器 E2E 依赖 `playwright-core` 和本机 Chrome；可通过

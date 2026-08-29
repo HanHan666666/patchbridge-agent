@@ -31,6 +31,8 @@ patchbridge-agent:
     base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL:}
     model: ${PATCHBRIDGE_AGENT_MODEL:deepseek-v4-flash}
     api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
+    # 必须与所选模型真实窗口一致；错误值会导致过早或过晚压缩，因此不提供默认值。
+    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
   mcp:
     # Demo 显式使用 Global JDBC 管理模式，不与 YAML Server 配置合并。
     # 生产密钥应由宿主密钥管理系统注入；Demo 也不提供默认值。

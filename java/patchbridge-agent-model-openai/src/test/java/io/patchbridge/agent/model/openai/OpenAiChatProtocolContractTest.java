@@ -98,7 +98,9 @@ class OpenAiChatProtocolContractTest {
         decoder.accept(
                 "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
                         + "\"function\":{\"arguments\":\"\\\":\\\"DEV-1\\\"}\"}}]},"
-                        + "\"finish_reason\":\"tool_calls\"}]}",
+                        + "\"finish_reason\":\"tool_calls\"}],"
+                        + "\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,"
+                        + "\"total_tokens\":12}}",
                 listener);
         decoder.finish(listener);
 
@@ -180,6 +182,41 @@ class OpenAiChatProtocolContractTest {
         assertEquals("业务失败：无权限", encoded.get("content"));
     }
 
+    /** 所有流式请求都必须要求上游返回 usage，Browser 才能按窗口阈值管理上下文。 */
+    @Test
+    void alwaysRequestsStreamUsage() {
+        Map<String, Object> body =
+                protocol.prepare(simpleRequest("response-usage"), "gpt-test").getBody();
+
+        assertEquals(
+                Collections.<String, Object>singletonMap("include_usage", Boolean.TRUE),
+                body.get("stream_options"));
+    }
+
+    /** 压缩后状态投影只保留近期真实消息关联的 reasoning，不能由通用层清空或猜测。 */
+    @Test
+    void projectsReasoningStateToRetainedMessages() {
+        AgentMessage retained =
+                new AgentMessage(
+                        "assistant-retained",
+                        MessageRole.ASSISTANT,
+                        Collections.<ContentBlock>singletonList(new TextBlock("近期答案")));
+        Map<String, Object> reasoning = new LinkedHashMap<String, Object>();
+        reasoning.put("assistant-evicted", "已淘汰思考");
+        reasoning.put("assistant-retained", "保留思考");
+
+        ModelState projected =
+                protocol.projectState(
+                        reasoningState(reasoning),
+                        Arrays.asList(userMessage(), retained));
+
+        Map<?, ?> projectedData = (Map<?, ?>) projected.getData();
+        Map<?, ?> projectedReasoning =
+                (Map<?, ?>) projectedData.get("reasoningByMessageId");
+        assertEquals(Collections.singletonMap("assistant-retained", "保留思考"),
+                projectedReasoning);
+    }
+
     /** 下一状态只保留当前历史仍引用的 reasoning，并加入本轮新状态。 */
     @Test
     void prunesStaleModelStateAndPublishesCompleteReplacement() {
@@ -237,7 +274,9 @@ class OpenAiChatProtocolContractTest {
 
         decoder.accept(
                 "{\"choices\":[{\"delta\":{\"content\":\"完成\"},"
-                        + "\"finish_reason\":\"stop\"}]}",
+                        + "\"finish_reason\":\"stop\"}],"
+                        + "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,"
+                        + "\"total_tokens\":6}}",
                 listener);
         decoder.finish(listener);
 
@@ -276,7 +315,8 @@ class OpenAiChatProtocolContractTest {
                 "{\"choices\":[{\"delta\":{\"content\":\"完成\"},"
                         + "\"finish_reason\":\""
                         + finishReason
-                        + "\"}]}",
+                        + "\"}],\"usage\":{\"prompt_tokens\":5,"
+                        + "\"completion_tokens\":1,\"total_tokens\":6}}",
                 listener);
         decoder.finish(listener);
         return lastStop(listener.events).getStopReason();
@@ -288,7 +328,8 @@ class OpenAiChatProtocolContractTest {
                 + "\"id\":\"call-1\",\"function\":{\"name\":\"local.echo\","
                 + "\"arguments\":\"{}\"}}]},\"finish_reason\":\""
                 + finishReason
-                + "\"}]}";
+                + "\"}],\"usage\":{\"prompt_tokens\":5,"
+                + "\"completion_tokens\":2,\"total_tokens\":7}}";
     }
 
     /** 创建只含一条用户消息的最小请求。 */

@@ -22,9 +22,14 @@ unsubscribe();
 controller.dispose();
 ~~~
 
-subscribe 注册后立即推送当前不可变快照。View 只调用 Controller 意图，不直接调用 Runtime、ModelClient、ToolClient 或 ConversationClient。
+subscribe 注册后立即推送当前不可变快照。View 只调用 Controller 意图，不直接调用 Runtime、ModelClient、ToolClient、ConversationClient 或 ContextManager。
 
-内置 HTTP Client 在边界校验响应形状：会话对象的 <code>conversationId/revision/status</code> 与时间戳字段、详情响应的 <code>context.messages</code>/<code>modelState</code> 必须符合契约类型，否则以明确的 invalid state 错误失败，不进入 Controller 状态与渲染。Widget 渲染会话列表时对所有来自响应的字符串（含 <code>conversationId</code>）做 HTML 实体转义，伪造 id 无法逃逸属性插值。
+内置 HTTP Client 在边界校验响应形状：会话对象的 <code>conversationId/revision/status</code> 与时间戳字段、详情响应的 <code>context.messages</code>/<code>modelContext</code> 必须符合契约类型，否则以明确的 invalid state 错误失败，不进入 Controller 状态与渲染。Widget 渲染会话列表时对所有来自响应的字符串（含 <code>conversationId</code>）做 HTML 实体转义，伪造 id 无法逃逸属性插值。
+
+Controller 初始化时同时读取服务端模型窗口配置。自动压缩在每次模型调用前由同一个
+`ContextManager` 判断；Headless View 可以读取 `state.contextWindow` 并调用
+`controller.compactContext()` 手动建立检查点。完整接入和失败语义见
+[《使用上下文压缩》](context-compaction.md)。
 
 
 ## 自定义 HttpTransport

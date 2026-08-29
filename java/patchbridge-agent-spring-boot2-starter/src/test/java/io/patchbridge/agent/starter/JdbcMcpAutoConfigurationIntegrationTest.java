@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
                 "spring.datasource.driver-class-name=org.h2.Driver",
                 "spring.sql.init.mode=always",
                 "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
+                "patchbridge-agent.model.context-window-tokens=128000",
                 "patchbridge-agent.mcp.source=jdbc",
                 "patchbridge-agent.mcp.jdbc.encryption-key="
                         + "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="

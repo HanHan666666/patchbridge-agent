@@ -87,6 +87,12 @@ public class PatchBridgeAgentProperties {
         /** Browser 未覆盖时使用的默认模型名。 */
         private String model;
 
+        /** 必须与当前模型能力一致的上下文窗口；不提供默认值以避免错误自动压缩。 */
+        private Integer contextWindowTokens;
+
+        /** 可选近期消息预算；为空时按窗口 20% 且最多 20,000 token 派生。 */
+        private Integer keepRecentTokens;
+
         /** 建连超时；0 明确表示不设上限。 */
         private int connectTimeoutMs = 10000;
 
@@ -110,6 +116,30 @@ public class PatchBridgeAgentProperties {
 
         /** 写入默认模型名；默认 Provider 要求非空白。 */
         public void setModel(String model) { this.model = model; }
+
+        /** 返回宿主明确配置的模型上下文窗口。 */
+        public Integer getContextWindowTokens() { return contextWindowTokens; }
+
+        /** 模型上下文窗口是自动压缩的安全边界，必须使用正整数。 */
+        public void setContextWindowTokens(Integer contextWindowTokens) {
+            if (contextWindowTokens == null || contextWindowTokens.intValue() <= 0) {
+                throw new IllegalArgumentException(
+                        "patchbridge-agent.model.context-window-tokens 必须大于 0");
+            }
+            this.contextWindowTokens = contextWindowTokens;
+        }
+
+        /** 返回可选的近期消息 token 预算。 */
+        public Integer getKeepRecentTokens() { return keepRecentTokens; }
+
+        /** 显式覆盖值必须为正；与 80% 阈值的关系在统一 Settings 构造期校验。 */
+        public void setKeepRecentTokens(Integer keepRecentTokens) {
+            if (keepRecentTokens == null || keepRecentTokens.intValue() <= 0) {
+                throw new IllegalArgumentException(
+                        "patchbridge-agent.model.keep-recent-tokens 必须大于 0");
+            }
+            this.keepRecentTokens = keepRecentTokens;
+        }
 
         /** 返回建连超时毫秒数。 */
         public int getConnectTimeoutMs() { return connectTimeoutMs; }

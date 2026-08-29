@@ -5,6 +5,8 @@
 
 设计决策的完整记录见
 [ADR-001：厂商中立 Agent Runtime 核心契约](../../../docs/architecture/adr/0001-provider-neutral-runtime.md)。
+上下文压缩的双层会话结构与失败边界见
+[ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](../../../docs/architecture/adr/0004-context-compaction.md)。
 
 ## 最小接入
 
@@ -78,7 +80,7 @@ const model: Model = {
     yield {
       type: 'message-stop',
       stopReason: 'end-turn',
-      usage: null,
+      usage: { inputTokens: 12, outputTokens: 1, totalTokens: 13 },
       modelState: null,
     };
   },
@@ -123,7 +125,13 @@ Responses API 时只新增 Provider Adapter，不需要修改 Controller、View 
 直接构造 `DefaultAgentRuntime` 时必须填齐五项 `limits`：
 
 ```ts
+const contextManager = new DefaultContextManager(
+  new HttpContextCompactionGateway('/ai'),
+);
+await contextManager.loadConfiguration();
+
 const runtime = new DefaultAgentRuntime(model, {
+  contextManager,
   limits: {
     maxModelCalls: 8,
     maxToolCalls: 16,
@@ -246,9 +254,9 @@ Interceptor 的 `next` 每次只能调用一次，防止重复计费或重复执
 继续看到同一终态。异步上报应写入宿主队列，不能在 Hook 或 diagnostics 中等待网络。
 Hook 收到的是独立深冻结数据，不能改写真实 Tool 参数。
 
-## ConversationContext
+## ConversationContext 与上下文压缩
 
-会话保存和读取以一个 revision 原子处理消息与 Provider 状态：
+会话保存和读取以一个 revision 原子处理完整消息与模型工作上下文：
 
 ```json
 {
@@ -256,13 +264,25 @@ Hook 收到的是独立深冻结数据，不能改写真实 Tool 参数。
   "revision": 3,
   "context": {
     "messages": [],
-    "modelState": null
+    "modelContext": {
+      "checkpoint": null,
+      "firstRetainedMessageId": null,
+      "modelState": null,
+      "usage": null
+    }
   }
 }
 ```
 
-服务端返回 `ConversationSnapshot { conversation, context }`。`modelState` 字段必须显式
-出现，值允许为 `null`。状态损坏或 revision 冲突必须明确失败，不能改用另一份历史数据。
+`messages` 始终是可见的完整聊天历史；自动或手动压缩只更新 `modelContext`。服务端返回
+`ConversationSnapshot { conversation, context }`，其中 `modelContext` 必须显式出现且四个字段
+完整。状态损坏或 revision 冲突必须明确失败，不能改用另一份历史数据。
+
+Controller 初始化会读取服务端窗口配置，达到 80% 时在下一次模型调用前自动压缩。View 可
+读取 `state.contextWindow` 并调用 `controller.compactContext()` 手动触发。正常模型响应必须
+携带 token usage；压缩后的保守估算标记为 `estimated`，下一次正常响应再恢复 Provider 计量。
+完整配置、UI 和 Provider 要求见
+[上下文压缩指南](../../../docs/guides/context-compaction.md)。
 
 ## 默认 Widget 与 Demo
 
@@ -279,5 +299,5 @@ widget.runtimeOptions = {
 
 Demo 首页会显示真实 Hook / Model Interceptor / Tool Interceptor 触发计数；危险的
 `local.device_restart` 演示 HITL，“停止”按钮演示取消，聊天消息演示 ContentBlock，
-会话重新加载演示 `ConversationContext + ModelState` 持久化。Provider 返回 `max-tokens` 时，
+会话重新加载演示完整 `ConversationContext` 与压缩检查点持久化。Provider 返回 `max-tokens` 时，
 Widget 保留已封闭内容并显示可通过 `::part(max-tokens-notice)` 定制的截断提示。

@@ -6,6 +6,9 @@ import io.patchbridge.agent.core.audit.AuditSink;
 import io.patchbridge.agent.core.auth.AdminAccessPolicy;
 import io.patchbridge.agent.core.auth.AuthenticatedToolAccessPolicy;
 import io.patchbridge.agent.core.auth.ToolAccessPolicy;
+import io.patchbridge.agent.core.compaction.ContextCompactionProvider;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
+import io.patchbridge.agent.core.compaction.DefaultContextCompactionProvider;
 import io.patchbridge.agent.core.conversation.ConversationOwnerResolver;
 import io.patchbridge.agent.core.conversation.ConversationRepository;
 import io.patchbridge.agent.core.conversation.UserIdConversationOwnerResolver;
@@ -16,6 +19,7 @@ import io.patchbridge.agent.core.invocation.ModelGateway;
 import io.patchbridge.agent.core.invocation.ModelInvocationPipeline;
 import io.patchbridge.agent.core.invocation.ToolInvocationPipeline;
 import io.patchbridge.agent.core.model.ModelProvider;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.schema.SimpleReflectionSchemaGenerator;
 import io.patchbridge.agent.core.schema.ToolSchemaGenerator;
 import io.patchbridge.agent.core.tool.DefaultToolNamingStrategy;
@@ -37,6 +41,7 @@ import io.patchbridge.agent.starter.tool.AnnotatedToolProvider;
 import io.patchbridge.agent.starter.web.AdminApiController;
 import io.patchbridge.agent.starter.web.AdminAuthorizationInterceptor;
 import io.patchbridge.agent.starter.web.ConversationController;
+import io.patchbridge.agent.starter.web.ContextCompactionController;
 import io.patchbridge.agent.starter.web.McpAdminController;
 import io.patchbridge.agent.starter.web.ModelStreamController;
 import io.patchbridge.agent.starter.web.ToolGatewayController;
@@ -147,6 +152,23 @@ public class PatchBridgeAgentAutoConfiguration {
     }
 
     // ---------- 模型网关 ----------
+
+    /**
+     * 从宿主必需的模型窗口配置派生 80% 阈值与近期保留预算。
+     * 缺失窗口在启动期失败，不能由 Browser 或 Provider 猜测。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ContextCompactionSettings.class)
+    public ContextCompactionSettings contextCompactionSettings(
+            PatchBridgeAgentProperties properties) {
+        Integer contextWindowTokens = properties.getModel().getContextWindowTokens();
+        if (contextWindowTokens == null) {
+            throw new IllegalStateException(
+                    "patchbridge-agent.model.context-window-tokens 是必需配置");
+        }
+        return new ContextCompactionSettings(
+                contextWindowTokens.intValue(), properties.getModel().getKeepRecentTokens());
+    }
 
     @Bean
     @ConditionalOnMissingBean(ModelProvider.class)
@@ -351,6 +373,17 @@ public class PatchBridgeAgentAutoConfiguration {
         return new DefaultModelGateway(invocationPipeline);
     }
 
+    /**
+     * 使用当前 ModelGateway 与当前 Provider 状态投影器生成上下文检查点。
+     * 自定义 Provider 必须同时提供 ModelStateProjector，缺失时启动明确失败。
+     */
+    @Bean
+    @ConditionalOnMissingBean(ContextCompactionProvider.class)
+    public ContextCompactionProvider contextCompactionProvider(
+            ModelGateway modelGateway, ModelStateProjector stateProjector) {
+        return new DefaultContextCompactionProvider(modelGateway, stateProjector);
+    }
+
     // ---------- Web 端点 ----------
 
     /** 宿主应用不会扫描 Starter 的包，统一错误模型必须由自动装配显式注册。 */
@@ -432,6 +465,23 @@ public class PatchBridgeAgentAutoConfiguration {
                 audit,
                 properties.getModel().getModel(),
                 objectMapper);
+    }
+
+    /** 注册模型配置与自动/手动上下文压缩端点。 */
+    @Bean
+    @ConditionalOnMissingBean(ContextCompactionController.class)
+    public ContextCompactionController contextCompactionController(
+            ContextCompactionSettings settings,
+            ContextCompactionProvider provider,
+            ObjectProvider<io.patchbridge.agent.core.auth.CurrentUserProvider> userProvider,
+            AuditRecorder audit,
+            PatchBridgeAgentProperties properties) {
+        return new ContextCompactionController(
+                settings,
+                provider,
+                requiredUserProvider(userProvider),
+                audit,
+                properties.getModel().getModel());
     }
 
     @Bean

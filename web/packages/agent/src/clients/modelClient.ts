@@ -80,7 +80,7 @@ export type ModelStopReason =
   | 'stop-sequence'
   | 'other';
 
-/** 可选 token 使用量；缺失表示目标厂商没有提供，而不是零消耗。 */
+/** Provider 报告的 token 使用量；协议仍保留 null 以便 Runtime 显式拒绝缺失值。 */
 export interface ModelUsage {
   /** 输入上下文 token 数。 */
   inputTokens: number;
@@ -382,13 +382,13 @@ function isStopReason(value: unknown): value is ModelStopReason {
     || value === 'other';
 }
 
-/** 判断 token 使用量是否为非负有限数，且不含任何额外统计字段。 */
+/** 判断 token 使用量是否为安全非负整数，且不含任何额外统计字段。 */
 function isUsage(value: unknown): value is ModelUsage {
   return isObject(value)
     && hasExactKeys(value, ['inputTokens', 'outputTokens', 'totalTokens'])
-    && isNonNegativeNumber(value.inputTokens)
-    && isNonNegativeNumber(value.outputTokens)
-    && isNonNegativeNumber(value.totalTokens);
+    && isNonNegativeInteger(value.inputTokens)
+    && isNonNegativeInteger(value.outputTokens)
+    && isNonNegativeInteger(value.totalTokens);
 }
 
 /** 判断 Provider State 是否含明确 format 和 data 字段，且无其他 vendor 字段。 */
@@ -433,9 +433,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** token 数必须是非负有限数；不同厂商是否使用整数由 Provider 负责。 */
-function isNonNegativeNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+/** JavaScript 边界只接受可无损持久化和计算的非负整数 token 数。 */
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** 构造稳定协议错误；该错误不可通过重试修复。 */

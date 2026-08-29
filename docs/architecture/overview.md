@@ -1,7 +1,7 @@
 # 架构设计：模块化单体、六边形架构与设计模式
 
 - 状态：当前实现的权威架构说明
-- 适用范围：Browser Agent Runtime、Java Core、Spring Boot Starter、Model、Tool、MCP、Conversation、Widget 与调试视图
+- 适用范围：Browser Agent Runtime、Java Core、Spring Boot Starter、Model、Tool、MCP、Conversation、上下文压缩、Widget 与调试视图
 - 核心目标：后端无 Agent Runtime 状态；对宿主前后端代码保持最小侵入
 
 ## 设计结论
@@ -35,7 +35,7 @@ Agent 执行状态：
 - 不保存每个用户当前执行到 Agent Loop 的哪一步；
 - 不在 JVM 内保留长期 Agent、线程、Checkpoint 或等待确认对象；
 - 任意应用节点都能处理下一次 Model、Tool 或 Conversation 请求；
-- 模型调用所需的稳定消息和 `ModelState` 由 Browser 请求显式携带；
+- 模型调用所需的工作消息和对应 `ModelState` 由 Browser 请求显式携带；
 - Conversation 和 MCP 配置是持久化业务数据，不是驻留在节点内存中的 Agent Session。
 
 SSE 连接、`ModelCall` 取消句柄和一次 HTTP 请求的上下文属于短生命周期资源，请求结束后即
@@ -64,10 +64,13 @@ flowchart LR
         Controller[AgentController\nApplication Service]
         State[AgentState Reducer]
         Execution[AgentExecution\nBounded Agent Loop]
+        ContextManager[ContextManager\nWorking Context Projection]
         ToolRegistry[Unified Tool Registry\nExecution Snapshot]
         View --> Controller
         Controller --> State
         Controller --> Execution
+        Controller --> ContextManager
+        Execution --> ContextManager
         Execution --> ToolRegistry
     end
 
@@ -84,6 +87,7 @@ flowchart LR
     end
 
     Browser -->|Structured Model SSE| HTTP
+    Browser -->|Model config / compact| HTTP
     Browser -->|Tool list / call| HTTP
     Browser -->|ConversationContext| HTTP
 
@@ -158,7 +162,8 @@ Headless Agent 之上的 Adapter，可以随时替换或从生产构建中删除
 Browser 的领域核心是稳定消息、状态和执行语义：
 
 - `AgentMessage + ContentBlock`；
-- `ConversationContext + ModelState`；
+- `ConversationContext { messages, modelContext }`；
+- `ContextManager` 与上下文窗口投影；
 - `AgentState` 与纯 reducer；
 - `AgentExecution`、中断、取消和有界 Agent Loop；
 - `ToolRegistrySnapshot`。
@@ -172,6 +177,8 @@ Browser 的领域核心是稳定消息、状态和执行语义：
 | `Model` | Runtime 的模型出站端口 | `HttpModel` |
 | `ToolRegistry` | Tool 发现、冻结与调用端口 | `DefaultToolRegistry` |
 | `ConversationClient` | 会话持久化出站端口 | `HttpConversationClient` |
+| `ContextManager` | 工作上下文编排端口 | `DefaultContextManager` |
+| `ContextCompactionGateway` | 模型配置与摘要出站端口 | `HttpContextCompactionGateway` |
 | `HttpTransport` | 企业 HTTP 安全链端口 | `FetchHttpTransport` 或宿主实现 |
 | `ToolInspectionSource` | 调试 View 的只读端口 | `ExecutionAwareToolInspectionSource` |
 
@@ -188,7 +195,8 @@ Starter Controller 是入站 Adapter，模型、JDBC、远程 MCP 和宿主安�
 | 领域 | Port |
 | --- | --- |
 | Model 入站 | `ModelGateway`、`ModelInvocation` |
-| Model 出站 | `ModelProvider`、`ModelCall`、`ModelStreamListener` |
+| Model 出站 | `ModelProvider`、`ModelCall`、`ModelStreamListener`、`ModelStateProjector` |
+| Context Compaction | `ContextCompactionProvider`、`ContextCompactionInvocation` |
 | Tool | `ToolProvider`、`ToolRegistry`、`ToolAccessPolicy`、`ToolNamingStrategy` |
 | Conversation | `ConversationRepository`、`ConversationOwnerResolver` |
 | Identity / Admin | `CurrentUserProvider`、`AdminAccessPolicy` |
@@ -236,23 +244,33 @@ Provider 内实现状态裁剪与失效规则。
 
 ### ConversationContext 聚合
 
-`ConversationContext` 是持久化聚合根，包含：
+`ConversationContext` 是持久化聚合根，包含完整历史和独立模型工作上下文：
 
 ```text
 ConversationContext
 ├── messages: ordered AgentMessage[]
-└── modelState: ModelState | null
+└── modelContext
+    ├── checkpoint: ContextCompactionCheckpoint | null
+    ├── firstRetainedMessageId: String | null
+    ├── modelState: ModelState | null
+    └── usage: ModelContextUsage | null
 ```
 
-消息和 ModelState 必须使用同一个 revision、同一个事务保存和读取。Repository 不提供分别
-保存消息与状态的方法，避免产生新版消息搭配旧版模型状态的撕裂快照。
+`messages` 始终保存完整、可展示历史；压缩只更新 `modelContext`，下一次模型调用使用 system、
+摘要检查点和近期真实消息的投影。二者必须使用同一个 revision、同一个事务保存和读取。
+Repository 不提供分别保存消息与工作上下文的方法，避免产生新版消息搭配旧版模型状态的撕裂快照。
 
 用户显式重置会话连续状态时，Repository 在 owner 范围和 `expectedRevision` 下原子
-保留消息、将 `modelState` 设为 `null`、推进 revision 并返回完整快照。即使状态
+保留消息、将 `modelContext.modelState` 设为 `null`、推进 revision 并返回完整快照。即使状态
 原本已空也要推进 revision，使迟到 Execution 或其他 Tab 的旧保存明确冲突。
 该操作不选择 Provider；按会话 Provider 路由如果产生真实需求，将通过独立
 `ModelTarget` 与 Router 设计，不塞入 `ModelState`。详见
 [ADR-002](adr/0002-model-state-lifecycle.md)。
+
+上下文压缩不属于显式状态重置。`DefaultContextManager` 负责 80% 阈值、安全消息段、重复
+摘要和模型输入投影；Server 用当前模型生成摘要，并通过当前 Provider 的
+`ModelStateProjector` 生成只与新工作上下文一致的状态。Browser 不读取或通用地清空
+Provider 私有数据。完整决策见[ADR-004](adr/0004-context-compaction.md)。
 
 ### Tool Registry Snapshot
 
@@ -307,6 +325,8 @@ sequenceDiagram
     participant C as AgentController
     participant R as ToolRegistry
     participant E as AgentExecution
+    participant X as ContextManager
+    participant A as Context Compact API
     participant M as Model
     participant T as Tool Snapshot
     participant P as Conversation
@@ -314,14 +334,20 @@ sequenceDiagram
     V->>C: sendMessage()
     C->>R: refresh() + snapshot()
     C->>E: start(context, snapshot)
-    E->>M: stream(messages, modelState, tools)
+    E->>X: inspect usage + prepareForModelCall()
+    opt reaches 80% threshold
+        X->>A: current model compact request
+        A-->>X: summary + projected ModelState
+    end
+    X-->>E: projected work messages + ModelContext
+    E->>M: stream(work messages, modelState, tools)
     M-->>E: structured block events
     alt Model requests Tool
         E->>T: invoke(name, arguments)
         T-->>E: ToolResult
         E->>M: stream(updated messages, next modelState)
     end
-    E-->>C: stable messages + modelState
+    E-->>C: full stable messages + modelContext
     C->>P: save one ConversationContext revision
     P-->>C: new revision
     C-->>V: immutable AgentState snapshot
@@ -432,6 +458,7 @@ Browser Agent Loop 仍是唯一编排者。
 | 需求 | 正确扩展点 | 不应该修改 |
 | --- | --- | --- |
 | 接入新模型厂商 | 新 `ModelProvider` Adapter + 状态格式 | Agent Runtime、Controller、View |
+| 自定义压缩状态投影 | Provider 的 `ModelStateProjector` / `ContextCompactionProvider` | Browser 按 format 读取或清空私有状态 |
 | Java Service 单次调用模型 | 注入 `ModelGateway`，按需显式传入 `AiRequestContext` | 反向请求 Browser SSE、在框架内增加业务 Repository |
 | 复用企业 HTTP 安全链 | `HttpTransport` | 三个 Http Client 各写一套鉴权 |
 | 自定义租户归属 | `ConversationOwnerResolver` | Controller 请求参数、JDBC 内猜 tenant |
@@ -475,7 +502,7 @@ Schema、Widget、Demo、测试和文档。Git 历史负责保存演进过程，
 1. Agent Loop 只在 Browser Runtime 中运行。
 2. 后端不持有跨请求的 Agent Execution 状态。
 3. Browser Runtime 和 Java Core 不出现厂商 wire protocol 字段。
-4. Message 与 ModelState 分离，但作为一个 ConversationContext 原子持久化。
+4. 完整 Message 与 ModelContext 分离，但作为一个 ConversationContext 原子持久化。
 5. AgentState 只能通过具名事件和 reducer 修改。
 6. Model 定义和 Tool 调度使用同一个 ToolRegistrySnapshot。
 7. 当前登录身份只来自服务端可信 Adapter。
@@ -488,7 +515,9 @@ Schema、Widget、Demo、测试和文档。Git 历史负责保存演进过程，
 14. 模型声明的一批 Tool Call 必须在当前批任何 Tool 执行前完成停止原因、ID、路由、参数和次数预检。
 15. `ToolCallResult.isError` 是模型可见业务失败；Tool/Adapter/Interceptor throw 或 rejection 必须终止 Execution。
 16. Tool 结果超限或运行中 Deadline 不承诺回滚宿主副作用，但必须阻止结果发布与下一次模型调用，并隔离迟到完成/异常。
-17. Browser Tool 结果必须在 Runtime 边界校验精确字段、类型与调用 ID；只有严格的 `isError === true` 才能作为模型可见业务失败继续循环。
+17. 上下文压缩不得删除完整消息；自动与手动路径共享 ContextManager、当前模型和 Provider 状态投影。
+18. 正常模型响应必须提供 token usage；压缩失败保持旧 ModelContext 且不继续发送可能溢出的请求。
+19. Browser Tool 结果必须在 Runtime 边界校验精确字段、类型与调用 ID；只有严格的 `isError === true` 才能作为模型可见业务失败继续循环。
 
 相关专项决策见：
 
@@ -515,7 +544,7 @@ Browser 持有 Agent Loop、当前 Execution、流式临时状态和 Human-in-th
 4. 稳定消息由 <code>AgentMessage + ContentBlock</code> 表示；当前 Block 为 text、image、reasoning、tool-call、tool-result。
 5. 流式 Tool 参数只有在完整聚合并验证为 JSON 对象后，才能进入稳定消息或实际调用。
 6. 展示 reasoning 与 <code>ModelState { format, data }</code> 分离；Runtime、Controller 和 View 不解释 <code>data</code>。
-7. <code>ConversationContext</code> 同时包含 messages 和 modelState，二者使用同一 revision、同一事务保存。
+7. <code>ConversationContext</code> 同时包含完整 messages 和 modelContext，二者使用同一 revision、同一事务保存；压缩只改变后者。
 8. Browser 传入的 userId、tenantId、roles、permissions 或风险结论不是服务端可信事实。
 9. 当前只有一个公开契约；未知字段、旧字段和非法形状明确失败，不存在 alias、fallback 或双轨协议。
 
@@ -552,7 +581,7 @@ Browser 持有 Agent Loop、当前 Execution、流式临时状态和 Human-in-th
 
 | Workspace | 当前用途 | R0 外部分发边界 |
 | --- | --- | --- |
-| <code>@patchbridge-agent/agent</code> | Headless Controller、Runtime、Client、Registry | 源码 workspace；未发布 npm |
+| <code>@patchbridge-agent/agent</code> | Headless Controller、Runtime、ContextManager、Client、Registry | 源码 workspace；未发布 npm |
 | <code>@patchbridge-agent/widget</code> | 参考 Web Component | 通过 Starter IIFE 使用 |
 | <code>@patchbridge-agent/webmcp-adapter</code> | 可选 WebMCP Adapter | ESM 源码或 Starter IIFE；未发布 npm |
 | <code>@patchbridge-agent/tool-inspector</code> | 只读 Tool 快照视图 | 通过 Starter IIFE 使用 |

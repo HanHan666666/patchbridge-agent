@@ -1,8 +1,8 @@
 # 路线图与当前进度
 
 - 文档状态：项目进度的唯一可信来源（Single Source of Truth）
-- 最近更新：2026-08-25
-- 当前里程碑：R1.6“开源文档信息架构重构”已完成；R2 Anthropic Provider 与 R3 Responses HTTP Provider 继续保持暂缓；R0 rc.2 候选 `f4c7be4` 已预检落档并冻结 tag `v0.1.0-rc.2`
+- 最近更新：2026-08-28
+- 当前里程碑：R1.7“上下文压缩”已完成；R2 Anthropic Provider 与 R3 Responses HTTP Provider 继续保持暂缓；R0 rc.2 候选 `f4c7be4` 已预检落档并冻结 tag `v0.1.0-rc.2`
 - 当前发布状态：Pre-release 源码候选；尚未发布 Maven Central 或 npm 公共包
 
 本文只回答三个问题：**已经实现了什么、接下来做什么、哪些事情当前不做**。
@@ -34,7 +34,7 @@
 
 | 范围 | 当前估算 | 说明 |
 | --- | --- | --- |
-| 近期确认的能力组合 | 100% | WebMCP、Inspector、样式扩展、纯前端 Tool、Global MCP、Call Trace、Java 单次模型调用与 R1.5 Runtime 生产级加固均已完成 |
+| 近期确认的能力组合 | 100% | WebMCP、Inspector、样式扩展、纯前端 Tool、Global MCP、Call Trace、Java 单次模型调用、R1.5 Runtime 生产级加固与 R1.7 上下文压缩均已完成 |
 | v0.1 核心功能 | 100% | 核心链路及二次代码质量审计整改已完成，rc.2 已冻结；后续里程碑属于新增能力 |
 | v0.1 源码开源准备 | 100% | Java/Web/Bundle/归档/安全扫描与真实模型预检已完成并绑定 rc.2 候选 |
 | 原始长期愿景 | 约 70% | 模型厂商扩展、既有 API 自动适配、公共包发布和部分生态能力尚未实现 |
@@ -53,8 +53,10 @@
 | ✅ | 后端无 Agent Runtime 状态 | 后端不驻留跨请求 Agent、执行步骤或等待确认对象；持久化数据不等同于节点运行状态 |
 | ✅ | `Message + ContentBlock` | 统一表达 text、image、reasoning、tool-call、tool-result，不把模型状态压成字符串 |
 | ✅ | `ModelState` 与展示消息分离 | 厂商续推状态按显式 format/data 保存，Browser 不理解厂商字段 |
+| ✅ | 完整历史与模型工作上下文分离 | `messages` 永远完整可见；`modelContext` 独立保存检查点、保留边界、Provider 状态和计量 |
+| ✅ | 上下文压缩 | 必需模型窗口配置、固定 80% 自动触发、当前模型摘要、默认 `min(20k, 20%)` 近期保留、手动入口与失败原子性已完成，见 [ADR-004](architecture/adr/0004-context-compaction.md) |
 | ✅ | 结构化 Model Stream | Browser 只接收 block/message/error 事件；Provider 独占厂商 wire protocol |
-| ✅ | 有界 `AgentExecution` | 模型次数、Tool 次数、整轮 Deadline、模型聚合内容和单个 Tool 结果均有明确上限；取消/超时共用唯一终态门与迟到隔离 |
+| ✅ | 有界 `AgentExecution` | 模型次数、Tool 次数、整轮 Deadline、模型聚合内容和单个 Tool 结果均有明确上限；框架默认模型预算为 16，Demo 显式使用 30；取消/超时共用唯一终态门与迟到隔离 |
 | ✅ | Runtime 生产级执行守卫 | R1.5 的停止原因与 Tool 一致性、全批预检、五项资源上限、Outcome、迟到隔离、Tool 错误分类、共享 Provider fixture 与真实模型 `max-tokens` 验收均已完成，详见 [ADR-003](architecture/adr/0003-browser-runtime-guards.md) |
 | ✅ | Human-in-the-loop | Tool 可声明调用前确认，Execution 提供明确 respond/cancel 语义 |
 | ✅ | Hook / Interceptor | Runtime Hook、Model Interceptor、Tool Interceptor 均有小接口扩展点 |
@@ -72,7 +74,7 @@
 | ✅ | Spring Boot 2 Starter | 提供显式端点和默认装配，不注册会污染宿主的全局异常处理 |
 | ✅ | `@AiTool / @AiParam` | 注解零 Spring 依赖；扫描支持继承、bridge method 与 JDK AOP 代理 |
 | ✅ | Tool Discovery / Call | 发现与调用都执行权限检查，可信用户/租户上下文不来自模型参数 |
-| ✅ | Conversation Context | `messages + modelState` 使用同一 revision 和事务原子保存、恢复 |
+| ✅ | Conversation Context | 完整 `messages + modelContext` 使用同一 revision 和事务原子保存、恢复；当前唯一 Schema 为 `model_context_json` |
 | ✅ | 会话 Owner 隔离 | 默认使用全局唯一 `userId`；多租户宿主必须覆盖 `ConversationOwnerResolver` 生成包含租户与用户维度的 owner key，所有 JDBC 读写均以 owner 约束 |
 | ✅ | Audit / Trace 基础能力 | Audit SPI、脱敏、持久化和只读调用链查看已经打通 |
 | ✅ | OpenAI-compatible Chat Provider | OkHttp 与可选 WebFlux Adapter 均保持异步流和取消语义 |
@@ -97,9 +99,10 @@
 | --- | --- | --- |
 | ✅ | Headless Agent | 宿主可以不使用 Widget，直接订阅 Controller state 并实现自己的 View |
 | ✅ | 参考 Widget | 覆盖聊天、会话、流式输出、Tool、HITL 和停止执行的完整参考链路 |
+| ✅ | 上下文窗口 UI | 顶栏展示 token / 占比 / 来源 / 阈值 / 近期预算 / 检查点，并提供空闲时“立即压缩”和压缩取消 |
 | ✅ | Widget 样式扩展 | CSS Variables、稳定 `::part()` 和 `theme="none"` 三层定制边界 |
 | ✅ | Tools Inspector | “聊天 / Tools 调试”页签只读展示 Agent 当前真正可调用的完整 Tool 快照 |
-| ✅ | Browser Call Trace | 账本、计时、恢复与视图已实现；采集默认 `off`、非法取值直接抛错、Demo 显式 `persistent`（Q-02，预检 SECURITY-01 源码核对） |
+| ✅ | Browser Call Trace | 账本、计时、恢复与视图已实现；累计稳定消息按事件整批原子回填并统一校验；采集默认 `off`、非法取值直接抛错、Demo 显式 `persistent`（Q-02，预检 SECURITY-01 源码核对） |
 | ✅ | 功能 Demo | Global MCP、纯前端 Tool、WebMCP、Inspector、Call Trace、主题、HITL、取消和恢复均有入口 |
 | ✅ | 真实外部服务原则 | 仓库不内置 Mock AI API 或 Mock MCP Server，Demo 使用显式真实 endpoint |
 | ✅ | Demo 预置真实 MCP 示例 | 空库首启自动播种麦当劳 MCP（`mcd` / `https://mcp.mcd.cn`）：无凭据、默认停用；用户在 `/ai-admin` 编辑认证为 bearer 并经凭据 REPLACE 填入令牌后启用；库非空绝不播种，删除后空库重启按同一语义复播 |
@@ -295,6 +298,48 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 `AGENTS.md`、README、QUICKSTART、包 README、发布检查清单中的旧路径引用已同步；
 `docs/` 路径已全部 ASCII 化，Markdown 本地链接检查与旧路径扫描无残留。
 
+### R1.7 — 上下文压缩（已完成，2026-08-27）
+
+目标：长会话达到模型窗口前，完整保留用户可见聊天历史，只把下一次 Provider 请求使用的
+工作上下文压缩为“当前模型摘要 + 近期原始消息”，并让自动与手动路径共享同一套边界。
+
+范围：
+
+- [x] 把唯一 `ConversationContext` 替换为完整 `messages + modelContext`，其中检查点、第一条
+  保留消息、Provider 私有状态和 token 计量同一 revision 原子保存；
+- [x] 要求宿主显式配置模型上下文窗口，固定在 80% 自动触发，默认近期预算为
+  `min(20_000, floor(window × 20%))`，允许单一显式近期预算覆盖；
+- [x] Browser `ContextManager` 集中负责用量判断、system 固定、Tool Call / Result 原子切分、
+  重复摘要合并、模型输入投影和压缩后保守估算；
+- [x] 服务端使用当前 `ModelGateway` 生成摘要，不提供 Tool 或替代摘要模型；Provider 通过
+  `ModelStateProjector` 独占私有状态投影；摘要模型读取保留尾部进行任务状态对账，避免把
+  已在近期消息完成的事项继续写成剩余工作；
+- [x] 正常 Provider usage 改为必需契约；成功压缩后仅在下一次正常响应前标记为 estimated；
+- [x] 默认 Widget 增加 token / 窗口占比、配置、检查点和“立即压缩”，Headless Controller
+  增加 `compactContext()`；
+- [x] 压缩、投影、取消或手动 revision 保存失败时保持完整历史和旧 `modelContext`，不重试、
+  不换模型、不清空状态、不继续发送可能溢出的请求；
+- [x] JDBC 当前 Schema 直接使用 `model_context_json`，不保留未发布旧结构的读取、双写或迁移 fallback。
+
+验收条件：
+
+- 自动阈值、默认/覆盖近期预算、非法窗口配置、首次/重复压缩、Tool 原子边界、system 固定和
+  无安全前缀均有单元测试；
+- 摘要成功、意外 Tool / `max-tokens`、缺 usage、Provider 状态投影、取消、手动保存冲突和失败
+  不变均有 Core、Provider、Starter 或 Controller 契约测试；
+- Widget 提供可观察的自动阶段、计量来源、检查点和手动入口，完整历史在压缩前后数量不变；
+- 配置、HTTP、Browser、Runtime、错误码、架构、ADR、使用指南、Quick Start 与 Demo 验收同步；
+- Java/Web 全量测试、五个 Browser workspace 构建和四个 Starter Bundle 字节一致性通过。
+
+验收结果：Java 全 Reactor 248 tests 通过；Web 五个 workspace 共 230 tests 通过；五包构建
+成功，四个生成 Bundle 与 Starter classpath 资源逐字节一致。Demo 首页的默认 Widget 已直接
+提供上下文面板和手动入口；`PatchBridgeAgentStarterIntegrationTest` 覆盖配置与压缩 HTTP
+端点，Demo API E2E 校验模型窗口与 80% 派生值，ContextManager / Provider 测试覆盖自动路径
+和失败原子性，因此无需增加独立 Demo 页。
+
+设计原因见[ADR-004](architecture/adr/0004-context-compaction.md)，接入步骤见
+[《使用上下文压缩》](guides/context-compaction.md)。
+
 ### R2 — Anthropic Provider 与会话连续状态重置（暂缓）
 
 - [ ] 实现 Anthropic Messages 请求/流式事件 Adapter；
@@ -356,7 +401,7 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 | --- | --- | --- |
 | Phase 0：Strands 技术验证 | ✅ 目标已完成、实现路线已替换 | 已证明 Browser Agent 可行；最终采用更小的自研 Runtime，不保留 Strands 兼容层 |
 | Phase 1：最小可发布版本 | ✅ 核心能力完成 | Java Core、Boot 2 Starter、Tool、Model、Conversation 与 Web UI 已落地；旧 session 命名不保留 |
-| Phase 2：企业可用性 | 🟡 部分完成 | RBAC、HITL、Audit、乐观 revision 已完成；Boot 3、内置限流、上下文压缩未完成 |
+| Phase 2：企业可用性 | 🟡 部分完成 | RBAC、HITL、Audit、乐观 revision 与上下文压缩已完成；Boot 3、内置限流未完成 |
 | Phase 3：减少改造成本 | 🟡 部分完成 | 纯前端 Tool 已完成；`@AiExpose` 与 OpenAPI 自动适配未完成 |
 | Phase 4：生态兼容 | 🟡 部分完成 | MCP Tools 导入与管理已完成；MCP Export 与 OpenTelemetry 未完成 |
 
@@ -394,6 +439,10 @@ MCP 用户级/租户级配置、完整 OAuth、Resources、Prompts、Tasks、Sam
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-08-28 | 修复重复压缩传播陈旧任务状态：保留现有 Browser/HTTP 契约，由服务端摘要入口把 `retainedMessages` 作为只读对账上下文交给当前模型，检查点只摘要淘汰前缀，但不得把已在保留尾部完成、取消或替代的事项继续列为剩余工作；摘要调用的 Provider 私有状态同步投影到全部真实输入；新增“前缀完成 83 次、尾部完成至 100 次”回归测试，并同步 ADR、Guide、HTTP Reference；Java 248 tests、Web 230 tests、五包构建与四 Bundle 字节一致通过 |
+| 2026-08-28 | 将 Demo 单次 Execution 的 `maxModelCalls` 从局部覆盖值 8 调整为 30，框架公共默认值 16 与其他宿主契约保持不变；Demo 指南明确已完成会话使用文件型 H2 持久化、未完成 Execution 不恢复；新增静态装配契约锁定 30 次预算；Java 247 tests、Web 230 tests、五包构建与四 Bundle 字节一致通过 |
+| 2026-08-28 | 修复 Call Trace 在连续 `tool-use` 中误报 Tool 引用损坏：保留 Runtime 累计消息契约，改为一次稳定消息事件先生成全部候选轨迹、统一校验后再单次提交；非法批次不留下半更新状态；新增“模型 Tool Call → Tool Result → 模型再次 Tool Call → 最终回答”完整回归测试，并同步 Call Trace 采集契约；Java 247 tests、Web 229 tests、五包构建与四 Bundle 字节一致通过 |
+| 2026-08-27 | 完成 R1.7“上下文压缩”：完整聊天历史与模型工作上下文分离；模型窗口改为必需配置，固定 80% 自动触发并默认保留 `min(20k, 20%)` 近期消息；Browser ContextManager 统一 system/Tool 安全切分、重复摘要、当前模型输入与 Provider usage，Starter 增加模型配置/压缩端点和状态投影，Widget 增加用量/检查点/手动入口；JDBC 唯一 Schema 替换为 `model_context_json` 且无兼容双轨；ADR-004、Guide/Reference/Architecture/Demo/README 同步；Java 247 tests、Web 228 tests、五包构建与四 Bundle 字节一致通过 |
 | 2026-08-25 | 重写根 README（1180 行 → 约 520 行）：按"简介 → 解决的问题 → 三个设计目标（服务端无 Agent 状态 / 低侵入集成 / 安全边界留在服务端）→ 场景与边界 → 架构总览 → 快速开始 → 安全模型 → 相关项目 → 状态与文档导航"重排；摘要前置三个核心设计（纯客户端 Agent、前端逻辑注册为 Agent Tool、注解式后端接入）；删除"为什么开源""Project Philosophy"等章节，Model/MCP/Conversation/Admin 细节收敛为结论加文档中心链接；保留双语 tagline 与状态声明，全文改用直接陈述句式；同日按评审意见修订：能力速览 Model Gateway 标注浏览器请求复用当前页面登录态、MCP Gateway 改为反向代理定位（凭据加密细节留在安全模型清单）、痛点新增"新领域的学习成本"并点名 Spring AI 的 JDK 17 / Boot 3 门槛、不覆盖场景说明改为"重型 Agent 平台领域 vs 本框架轻量定位、执行能力持续增强"；不改变任何产品行为与契约 |
 | 2026-08-24 | 完成 R1.6“开源文档信息架构重构”：建立中文文档门户、Guide/Reference/Architecture/ADR/Research/Release/Archive/Contributing 分层，拆分并删除用户手册与功能备忘，路线图迁移为 `docs/roadmap.md`，更新 AGENTS/README/QUICKSTART/包 README/发布检查清单引用，完成文档贡献规范与全量本地链接/路径验收 |
 | 2026-08-24 | 接受 R1.6“开源文档信息架构重构”设计并登记为待实施：确定中文标题、导航、正文与 ASCII 稳定路径分层，规划 Guide、Reference、Architecture、Research、Release、Archive、Contributing 信息架构；给出当前文件与两份混合长文档的迁移表、唯一权威来源矩阵、执行阶段和验收 Gate；明确本阶段不搭建文档网站、不创建英文副本、不修改产品源码、不保留旧路径兼容页 |
@@ -430,6 +479,8 @@ MCP 用户级/租户级配置、完整 OAuth、Resources、Prompts、Tasks、Sam
 
 - [开源文档信息架构与中文写作体系重构方案](architecture/designs/documentation-system.md)
 - [ADR-003：Browser Agent Runtime 生产级执行守卫](architecture/adr/0003-browser-runtime-guards.md)
+- [ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](architecture/adr/0004-context-compaction.md)
+- [使用上下文压缩](guides/context-compaction.md)
 - [Java 后端单次模型调用 API 设计](architecture/designs/java-model-gateway.md)
 - [v0.1 源码发布收口代码质量审计](releases/v0.1/audits/source-quality.md)
 - [v0.1 公开契约与安全默认值审计](releases/v0.1/audits/public-contract-and-security.md)

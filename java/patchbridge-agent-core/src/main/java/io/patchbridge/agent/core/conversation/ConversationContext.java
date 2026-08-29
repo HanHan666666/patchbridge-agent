@@ -1,7 +1,7 @@
 package io.patchbridge.agent.core.conversation;
 
 import io.patchbridge.agent.core.model.AgentMessage;
-import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.MessageRole;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -19,22 +19,26 @@ public final class ConversationContext {
     /** 按对话顺序排列的稳定消息快照。 */
     private final List<AgentMessage> messages;
 
-    /** Provider 拥有的连续状态；无状态模型或空会话时可以为空。 */
-    private final ModelState modelState;
+    /** 与完整消息历史分离、可以独立压缩的模型工作上下文。 */
+    private final ModelContext modelContext;
 
     /**
      * 创建不可变会话上下文。
      *
      * @param messages 完整稳定消息列表，允许为空但不能为 null
-     * @param modelState 可选的模型连续状态
+     * @param modelContext 非空的模型工作上下文
      */
-    public ConversationContext(List<AgentMessage> messages, ModelState modelState) {
+    public ConversationContext(List<AgentMessage> messages, ModelContext modelContext) {
         if (messages == null) {
             throw new IllegalArgumentException("conversationContext.messages 不可为空");
         }
+        if (modelContext == null) {
+            throw new IllegalArgumentException("conversationContext.modelContext 不可为空");
+        }
         assertUniqueMessageIds(messages);
+        assertModelContextReferences(messages, modelContext);
         this.messages = Collections.unmodifiableList(new ArrayList<AgentMessage>(messages));
-        this.modelState = modelState;
+        this.modelContext = modelContext;
     }
 
     /** 返回按对话顺序排列的不可变消息快照。 */
@@ -42,9 +46,9 @@ public final class ConversationContext {
         return messages;
     }
 
-    /** 返回可选的 Provider 连续状态。 */
-    public ModelState getModelState() {
-        return modelState;
+    /** 返回不可为空的模型工作上下文。 */
+    public ModelContext getModelContext() {
+        return modelContext;
     }
 
     /** 保证消息稳定 ID 在一个会话内唯一，避免恢复后渲染和追踪指向错误消息。 */
@@ -58,5 +62,34 @@ public final class ConversationContext {
                 throw new IllegalArgumentException("会话内消息 id 重复: " + message.getId());
             }
         }
+    }
+
+    /** 检查点边界和用量游标都必须引用完整聊天历史中的真实消息。 */
+    private static void assertModelContextReferences(
+            List<AgentMessage> messages, ModelContext modelContext) {
+        String retainedId = modelContext.getFirstRetainedMessageId();
+        if (retainedId != null) {
+            AgentMessage retained = findMessage(messages, retainedId);
+            if (retained == null || retained.getRole() == MessageRole.SYSTEM) {
+                throw new IllegalArgumentException(
+                        "modelContext.firstRetainedMessageId 必须引用非 system 消息");
+            }
+        }
+        ModelContextUsage usage = modelContext.getUsage();
+        if (usage != null && usage.getMeasuredThroughMessageId() != null
+                && findMessage(messages, usage.getMeasuredThroughMessageId()) == null) {
+            throw new IllegalArgumentException(
+                    "modelContext.usage.measuredThroughMessageId 引用了不存在的消息");
+        }
+    }
+
+    /** 按稳定 ID 查找真实聊天消息。 */
+    private static AgentMessage findMessage(List<AgentMessage> messages, String id) {
+        for (AgentMessage message : messages) {
+            if (message.getId().equals(id)) {
+                return message;
+            }
+        }
+        return null;
     }
 }

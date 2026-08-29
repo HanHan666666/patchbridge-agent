@@ -58,7 +58,7 @@ export type AgentLifecycleEvent =
       readonly responseMessageId: string;
       /** Provider 已标准化的停止原因。 */
       readonly stopReason: ModelStopReason;
-      /** 本次调用的 token 用量；目标厂商未提供时为 null，不是零消耗。 */
+      /** 本次调用的 token 用量；正常完成事件只会携带 Provider 的非空计量。 */
       readonly usage: ModelUsage | null;
       /** 调用开始到首个非空正文、思考或 Tool 参数增量的耗时。 */
       readonly firstTokenLatencyMs: number;

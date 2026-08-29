@@ -34,7 +34,8 @@ PatchBridge Agent 让运行多年的 Java / Spring Boot 企业系统低成本获
 | 统一 Tool Registry | 四种 Tool 来源进入同一目录和命名空间；每轮执行使用不可变快照 |
 | Model Gateway | 模型调用经后端转发，浏览器请求复用当前页面登录态；API Key 只存在服务端；内置 OpenAI-compatible Provider，可整体替换 |
 | MCP Gateway | 企业接入的外部 MCP Server 由后端反向代理为统一 Tool，前端 Agent 直接调用；用户无需配置任何地址与凭据 |
-| 会话持久化 | 消息与模型续接状态（`ModelState`）同一 revision 原子落库，跨设备恢复对话 |
+| 上下文压缩 | 完整聊天历史始终保留；模型工作上下文在窗口 80% 自动压缩，也支持 Widget 手动建立检查点 |
+| 会话持久化 | 完整消息与模型工作上下文（检查点、`ModelState`、usage）同一 revision 原子落库，跨设备恢复对话 |
 | 审计与调试 | 服务端 Audit / Trace，浏览器 Tools Inspector 与 Call Trace |
 | 参考 Widget | 开箱即用的 Web Component，三层样式定制，也可完全 Headless 自建 UI |
 
@@ -143,7 +144,7 @@ Agent Runtime 完整运行在浏览器中，包括：
 | 状态 | 位置 | 生命周期 |
 | --- | --- | --- |
 | 执行状态（Runtime State）：当前执行到哪一步、正在流式输出的内容、等待中的确认 | 浏览器 | 页面关闭即消失 |
-| 会话（Conversation）：消息历史与模型续接状态 `ModelState` | 服务端数据库 | 作为普通业务数据持久化 |
+| 会话（Conversation）：完整消息历史与独立模型工作上下文 `ModelContext` | 服务端数据库 | 作为普通业务数据持久化 |
 
 用户换一台设备登录，加载历史会话即可继续对话。v0.1 的边界：执行中断后从最后一次成功保存的完整对话状态继续，不恢复执行到一半的运行；服务端因此永远不需要 Checkpoint 和工作流状态机。
 
@@ -327,13 +328,19 @@ sequenceDiagram
     participant V as 页面 / Widget
     participant C as AgentController（浏览器）
     participant E as AgentExecution（浏览器）
+    participant X as ContextManager（浏览器）
     participant S as 服务端 /ai 端点
     participant P as Conversation API
 
     V->>C: sendMessage()
     C->>C: 刷新并冻结 Tool 快照
     C->>E: start(context, tools)
-    E->>S: 模型流式请求（携带消息与 ModelState）
+    E->>X: 检查工作上下文用量
+    opt 达到窗口 80%
+        X->>S: 用当前模型生成摘要并投影 ModelState
+        S-->>X: 摘要检查点
+    end
+    E->>S: 模型流式请求（摘要 + 近期消息 + ModelState）
     S-->>E: 结构化流事件
     alt 模型请求调用 Tool
         E->>E: 前端 Tool 本地执行
@@ -341,12 +348,12 @@ sequenceDiagram
         S-->>E: Tool 结果
         E->>S: 携带 Tool 结果发起下一次模型流
     end
-    E-->>C: 稳定消息 + 新 ModelState
+    E-->>C: 完整稳定消息 + 新 ModelContext
     C->>P: 保存一个会话 revision
     C-->>V: 新状态快照
 ```
 
-每轮执行是一个独立 `AgentExecution`，拥有独立的取消信号、人工确认中断槽和资源上限（模型次数、Tool 次数、整轮时长、内容量五项预算）。用户停止执行时，取消会同时传递给模型流、前端 Tool 和后端 Tool 请求。执行细节见[Runtime 契约参考](docs/reference/runtime-contracts.md)。
+每轮执行是一个独立 `AgentExecution`，拥有独立的取消信号、人工确认中断槽和资源上限（模型次数、Tool 次数、整轮时长、内容量五项预算）。用户停止执行时，取消会同时传递给上下文摘要、模型流、前端 Tool 和后端 Tool 请求。执行细节见[Runtime 契约参考](docs/reference/runtime-contracts.md)。
 
 ### 模块组成
 
@@ -404,6 +411,7 @@ patchbridge-agent:
     base-url: https://api.your-llm.com/v1   # OpenAI-compatible
     model: your-model
     api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}   # 环境变量注入，浏览器拿不到
+    context-window-tokens: 128000   # 必须与所选模型真实窗口一致
 ```
 
 会话与审计默认经 JDBC 存储（H2 / MySQL）。远程 MCP 为可选项，在 `patchbridge-agent.mcp` 下配置。完整配置项见[配置参考](docs/reference/configuration.md)，逐步接入见[Spring Boot 接入指南](docs/guides/spring-boot-integration.md)。
@@ -459,7 +467,10 @@ public DeviceDTO getDevice(
 
 `enterpriseFetch` 代指页面已有的请求客户端（含 Cookie、CSRF、Token 刷新）。`inputSchema` 由 Registry 在注册期编译、在统一执行边界强制校验模型参数，Tool 内部无需重复做参数检查。
 
-打开页面即可对话。也可以完全不用 Widget，直接订阅 Headless Controller 的状态自建 UI，见[浏览器接入指南](docs/guides/browser-integration.md)。
+打开页面即可对话。Widget 会在模型工作上下文达到窗口 80% 时自动压缩，并在顶栏提供手动
+入口；完整聊天历史不会删除。也可以完全不用 Widget，直接订阅 Headless Controller 的状态
+自建 UI，见[浏览器接入指南](docs/guides/browser-integration.md)和
+[上下文压缩指南](docs/guides/context-compaction.md)。
 
 ### 运行 Demo
 
@@ -472,6 +483,7 @@ export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
 # 模型地址与名称必须显式配置
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
 export PATCHBRIDGE_AGENT_MODEL='your-model'
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
 mvn install -DskipTests
 mvn -pl patchbridge-agent-demo spring-boot:run
 ```
@@ -516,7 +528,7 @@ mvn -pl patchbridge-agent-demo spring-boot:run
 
 ## 当前状态与路线图
 
-- v0.1 核心链路已完成并冻结源码候选 `v0.1.0-rc.2`：Browser Agent Runtime、Java Core / Boot 2 Starter、`@AiTool`、统一 Tool Registry、OpenAI-compatible Model Gateway、MCP Gateway、会话持久化、审计、前端 Tool / WebMCP、Tools Inspector 与 Call Trace。
+- v0.1 核心链路已完成并冻结源码候选 `v0.1.0-rc.2`；当前源码在该基线后完成 R1.7 上下文压缩，包含完整历史与工作上下文分离、80% 自动触发和手动入口。
 - Pre-release：API 可能调整，模块边界可能优化；Maven / npm 未发布公共仓库；不建议直接用于关键生产系统。
 - 实施进度、下一步顺序与暂缓范围只以[《路线图与当前进度》](docs/roadmap.md)为准；版本边界与已知限制见[《v0.1 版本说明》](docs/releases/v0.1/release-notes.md)。
 
@@ -528,7 +540,7 @@ mvn -pl patchbridge-agent-demo spring-boot:run
 | --- | --- |
 | 第一次运行 | [快速开始](QUICKSTART.md)、[从源码构建](docs/guides/build-from-source.md) |
 | 后端接入 | [Spring Boot 接入指南](docs/guides/spring-boot-integration.md)、[Java Tool 开发](docs/guides/java-tools.md)、[后端单次模型调用](docs/guides/java-model-invocation.md) |
-| 浏览器接入 | [浏览器接入指南](docs/guides/browser-integration.md)、[前端 Tool](docs/guides/frontend-tools.md)、[WebMCP Adapter](docs/guides/webmcp.md)、[Widget 定制](docs/guides/widget-customization.md) |
+| 浏览器接入 | [浏览器接入指南](docs/guides/browser-integration.md)、[上下文压缩](docs/guides/context-compaction.md)、[前端 Tool](docs/guides/frontend-tools.md)、[WebMCP Adapter](docs/guides/webmcp.md)、[Widget 定制](docs/guides/widget-customization.md) |
 | MCP 与管理 | [Global MCP 与 Admin](docs/guides/global-mcp.md) |
 | 调试 | [Tools Inspector](docs/guides/tools-inspector.md)、[Call Trace](docs/guides/call-trace.md) |
 | 生产上线 | [生产接入准备与排障](docs/guides/production-readiness.md) |

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS agent_conversation (
     title           VARCHAR(256),
     revision        BIGINT NOT NULL DEFAULT 0,
     status          VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
-    model_state_json CLOB,
+    model_context_json CLOB NOT NULL,
     created_at      TIMESTAMP NOT NULL,
     updated_at      TIMESTAMP NOT NULL
 );
@@ -75,4 +75,3 @@ CREATE TABLE IF NOT EXISTS agent_mcp_config_generation (
 INSERT INTO agent_mcp_config_generation (id, generation)
 SELECT 1, 0 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM agent_mcp_config_generation WHERE id = 1);
-

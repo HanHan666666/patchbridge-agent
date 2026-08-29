@@ -309,6 +309,12 @@ describe('HttpModel 结构化流', () => {
       {
         type: 'message-stop',
         stopReason: 'end-turn',
+        usage: { inputTokens: 1.5, outputTokens: 1, totalTokens: 2.5 },
+        modelState: null,
+      },
+      {
+        type: 'message-stop',
+        stopReason: 'end-turn',
         usage: null,
         modelState: { format: 'f', data: null, vendorState: {} },
       },

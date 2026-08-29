@@ -10,6 +10,7 @@ Demo 是一个模拟企业设备系统，用真实模型和真实 MCP endpoint�
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://model-gateway.example/v1'
 export PATCHBRIDGE_AGENT_MODEL='model-name-placeholder'
 export PATCHBRIDGE_AGENT_MODEL_API_KEY='<model-api-key-placeholder>'
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
 export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<base64-encoded-32-byte-key-placeholder>'
 
 cd java
@@ -17,13 +18,18 @@ mvn install -DskipTests
 mvn -pl patchbridge-agent-demo spring-boot:run
 ~~~
 
-不要使用占位符本身启动。模型 API key 是否必需取决于目标网关；模型 base URL 和 JDBC MCP 加密密钥在 Demo 当前装配下是硬前置。
+不要使用占位符本身启动。模型 API key 是否必需取决于目标网关；模型 base URL、真实上下文
+窗口和 JDBC MCP 加密密钥在 Demo 当前装配下是硬前置。
+
+Demo 默认使用 `jdbc:h2:file:./data/demo-db`。已经成功保存的完整 Conversation 在进程重启后
+继续存在；浏览器中仍在运行、失败或尚未保存的 Execution 不是服务端会话数据，刷新页面或
+重启后不会恢复。
 
 ### 入口
 
 | 入口 | 地址 | 可观察内容 |
 | --- | --- | --- |
-| Demo 首页 | <code>http://localhost:8080/</code> | 设备业务页、聊天、主题、Runtime 指标 |
+| Demo 首页 | <code>http://localhost:8080/</code> | 设备业务页、聊天、主题、Runtime 指标与 30 次模型调用预算 |
 | Tools 调试 | 首页页签 | 当前 Registry/Execution 快照 |
 | 调用轨迹 | 首页页签 | Browser Call Trace |
 | Admin | <code>http://localhost:8080/ai-admin/</code> | Audit/Trace 和 Global MCP |
@@ -44,6 +50,8 @@ Demo 源码定义 admin、operator、user、auditor 四个内存用户及不同�
 8. 进入 Admin 检查 Audit/Trace；在 JDBC 模式创建占位测试 Server，验证 test/refresh/enable/revision。
 9. 用 Demo 业务端点发起一次真实文本和图片模型调用，确认结果没有进入 Conversation 或 Audit。
 10. 让真实 Browser Agent 产生一次 <code>max-tokens</code>，确认 Widget 显示可定制的截断提示，已封闭消息和 ModelState 仍保存；其他底层守卫通过 Runtime/Provider 契约测试验收，不另建 Demo 页。
+11. 完成一次正常模型响应后展开 Widget 顶栏上下文面板，确认显示 Provider token、窗口、80% 阈值与近期预算；点击“立即压缩”，确认消息数量不变、检查点出现且来源临时变成压缩后估算。
+12. 继续发送一条消息，确认上下文来源恢复为 Provider 计量；自动 80% 路径、Tool 原子切分和失败不变通过 ContextManager / Provider 契约测试验收。
 
 ### Demo 安全边界
 
@@ -60,8 +68,11 @@ Demo 对 <code>/ai/**</code> 和 logout 关闭 CSRF，是同源 SameSite Cookie 
 - “Tools 调试”展示上述所有已启用来源，列表随同一 Registry revision 更新。
 - “调用轨迹”按执行展示用户输入、模型调用、Tool 调用、确认、耗时与 token；每条已完成模型调用右侧显示首 token 延迟和首 token 后平均输出 tok/s；刷新后从本浏览器 localStorage 恢复，ℹ️ 弹窗解释不写后端的原因。
 - 首页顶栏可实时切换 8 种主题（深蓝企业为默认，另有青绿科技、暗色、高对比度、赛博朋克、Win98 复古、奇幻 RPG、NES 像素），页面外壳与 Widget / Inspector / Call Trace 同步换肤；组件侧全部由宿主 CSS Variables 与 `::part` 完成，没有修改 Widget 内部 class，选择记忆在 localStorage。对话流中的工具调用 / 执行结果块也通过 `::part(tool-call-block)` / `::part(tool-result-block)` 参与换肤（如 Win98 的凹陷面板、赛博朋克的双色虚线发光框）。赛博朋克 / NES / RPG 三个主题的页面特效与素材来自本地 vendor 的第三方库（cybercore-css / NES.css，MIT；RPGUI，zlib；Press Start 2P 字体，OFL），各自的样式表仅在对应主题激活时启用。
-- 左侧 Runtime 状态显示 Hook 最后事件及 Model / Tool Interceptor 的真实触发次数。
+- 左侧 Runtime 状态显示 Hook 最后事件及 Model / Tool Interceptor 的真实触发次数；Demo 显式把
+  单次 Execution 的 `maxModelCalls` 配为 30，框架公共默认值仍为 16。
 - `local.device_restart` 演示 HITL；流式时“停止”演示取消；刷新后继续对话演示
-  `ConversationContext + ModelState` 同 revision 恢复。
+  完整消息与 `ModelContext` 同 revision 恢复。
+- Widget 顶栏展示当前 token / 窗口占比、80% 自动阈值、近期预算和最近检查点；“立即压缩”
+  成功后聊天消息数量不变，下一次正常响应把估算计量替换为 Provider 计量。
 - 真实模型返回 `max-tokens` 时，Widget 保留并保存已封闭内容，同时显示“内容可能不完整”提示；
   其他底层执行守卫以 Runtime/Provider 契约测试为验收入口，不增加与业务无关的 Demo 页。

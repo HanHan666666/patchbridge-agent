@@ -1,5 +1,5 @@
 /**
- * AgentState 纯函数测试：验证 ConversationContext、稳定消息和 ModelState 始终
+ * AgentState 纯函数测试：验证 ConversationContext、稳定消息和 ModelContext 始终
  * 通过显式领域事件原子转换，不让 Controller 的异步时序渗入状态规则。
  */
 import { describe, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ import type {
   ModelState,
   ToolDefinition,
 } from '../src/types';
+import { testModelContext } from './testContext';
 
 /** 创建稳定测试会话。 */
 function conversation(id: string, revision = 1): Conversation {
@@ -43,8 +44,11 @@ const MODEL_STATE: ModelState = {
   data: { responseMessageId: 'assistant-1' },
 };
 
+/** Provider 状态所在的完整模型工作上下文。 */
+const MODEL_CONTEXT = testModelContext(MODEL_STATE);
+
 describe('AgentState 状态机', () => {
-  it('加载 ConversationContext 时同时提交消息和 ModelState，并隔离消息数组', () => {
+  it('加载 ConversationContext 时同时提交消息和 ModelContext，并隔离消息数组', () => {
     const selected = conversation('conversation-1', 3);
     const messages = [textMessage('user-1', 'user', '历史消息')];
     let state = reduceAgentState(createInitialAgentState(), {
@@ -60,14 +64,14 @@ describe('AgentState 状态机', () => {
     state = reduceAgentState(state, {
       type: 'CONVERSATION_LOADED',
       conversation: selected,
-      context: { messages, modelState: MODEL_STATE },
+      context: { messages, modelContext: MODEL_CONTEXT },
     });
 
     expect(state.status).toBe('done');
     expect(state.conversation).toEqual(selected);
     expect(state.messages).toEqual(messages);
     expect(state.messages).not.toBe(messages);
-    expect(state.modelState).toEqual(MODEL_STATE);
+    expect(state.modelContext).toEqual(MODEL_CONTEXT);
     expect(state.runOutcome).toBeNull();
 
     const reset = reduceAgentState(state, { type: 'NEW_CONVERSATION_STARTED' });
@@ -75,12 +79,12 @@ describe('AgentState 状态机', () => {
       status: 'idle',
       conversation: null,
       messages: [],
-      modelState: null,
+      modelContext: testModelContext(),
       runOutcome: null,
     });
   });
 
-  it('Run 增量、确认中断、稳定消息与 ModelState 形成一条显式状态链', () => {
+  it('Run 增量、确认中断、稳定消息与 ModelContext 形成一条显式状态链', () => {
     const userMessage = textMessage('user-1', 'user', '重启设备');
     const assistantMessage = textMessage('assistant-1', 'assistant', '执行完成');
     let state = reduceAgentState(createInitialAgentState(), {
@@ -126,16 +130,16 @@ describe('AgentState 状态机', () => {
       type: 'RUN_MESSAGES_COMMITTED',
       baseMessages: [userMessage],
       addedMessages: [assistantMessage],
-      modelState: MODEL_STATE,
+      modelContext: MODEL_CONTEXT,
     });
 
     expect(state.messages).toEqual([userMessage, assistantMessage]);
-    expect(state.modelState).toEqual(MODEL_STATE);
+    expect(state.modelContext).toEqual(MODEL_CONTEXT);
     expect(state.streamingAssistant).toBeNull();
     expect(state.pendingConfirmation).toBeNull();
   });
 
-  it('保存开始与完成保留 Run Outcome，不拆分消息和 ModelState 快照', () => {
+  it('保存开始与完成保留 Run Outcome，不拆分消息和 ModelContext 快照', () => {
     const userMessage = textMessage('user-1', 'user', '问题');
     let state = reduceAgentState(createInitialAgentState(), {
       type: 'RUN_STARTED',
@@ -145,7 +149,7 @@ describe('AgentState 状态机', () => {
       type: 'RUN_MESSAGES_COMMITTED',
       baseMessages: [userMessage],
       addedMessages: [],
-      modelState: MODEL_STATE,
+      modelContext: MODEL_CONTEXT,
     });
     state = reduceAgentState(state, {
       type: 'RUN_FINISHED',
@@ -163,7 +167,7 @@ describe('AgentState 状态机', () => {
     expect(state.status).toBe('done');
     expect(state.conversation).toEqual(saved);
     expect(state.messages).toEqual([userMessage]);
-    expect(state.modelState).toEqual(MODEL_STATE);
+    expect(state.modelContext).toEqual(MODEL_CONTEXT);
     expect(state.runOutcome).toEqual({ type: 'max-tokens' });
   });
 
@@ -243,7 +247,7 @@ describe('AgentState 状态机', () => {
     state = reduceAgentState(state, {
       type: 'CONVERSATION_LOADED',
       conversation: first,
-      context: { messages: history, modelState: MODEL_STATE },
+      context: { messages: history, modelContext: MODEL_CONTEXT },
     });
 
     const otherDeleted = reduceAgentState(state, {
@@ -252,7 +256,7 @@ describe('AgentState 状态机', () => {
     });
     expect(otherDeleted.conversation).toEqual(first);
     expect(otherDeleted.messages).toEqual(history);
-    expect(otherDeleted.modelState).toEqual(MODEL_STATE);
+    expect(otherDeleted.modelContext).toEqual(MODEL_CONTEXT);
 
     const currentDeleted = reduceAgentState(otherDeleted, {
       type: 'CONVERSATION_DELETED',
@@ -262,7 +266,7 @@ describe('AgentState 状态机', () => {
       status: 'idle',
       conversation: null,
       messages: [],
-      modelState: null,
+      modelContext: testModelContext(),
     });
   });
 });

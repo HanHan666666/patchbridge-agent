@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { HttpConversationClient } from '../src/clients/conversationClient';
 import type { HttpTransport } from '../src/clients/http';
+import { testModelContext } from './testContext';
 
 /** 返回固定 JSON 文本的桩传输层。 */
 function transportWith(body: unknown): HttpTransport {
@@ -61,21 +62,21 @@ describe('HttpConversationClient 响应边界校验', () => {
     await expect(bad.save('conv-1', {
       title: 'x',
       revision: 0,
-      context: { messages: [], modelState: null },
+      context: { messages: [], modelContext: testModelContext() },
     })).rejects.toThrow('conversationId');
   });
 
-  it('get 的 context.messages 与 modelState 形状强制校验', async () => {
+  it('get 的 context.messages 与 modelContext 形状强制校验', async () => {
     const badMessages = new HttpConversationClient('/ai', transportWith({
       conversation: validConversation(),
-      context: { messages: 'oops', modelState: null },
+      context: { messages: 'oops', modelContext: testModelContext() },
     }));
     await expect(badMessages.get('conv-1')).rejects.toThrow('context.messages');
 
     const badState = new HttpConversationClient('/ai', transportWith({
       conversation: validConversation(),
-      context: { messages: [], modelState: 'opaque' },
+      context: { messages: [], modelContext: 'opaque' },
     }));
-    await expect(badState.get('conv-1')).rejects.toThrow('context.modelState');
+    await expect(badState.get('conv-1')).rejects.toThrow('context.modelContext');
   });
 });

@@ -107,6 +107,10 @@ class PatchBridgeAgentElement extends HTMLElement {
   // 渲染缓存节点：connectedCallback 中创建，避免依赖构造时序
   /** 面板标题节点；动态 title 由当前 Controller 快照驱动重绘。 */
   private panelTitleEl!: HTMLElement;
+  /** Header 中始终可见的上下文窗口占比摘要。 */
+  private contextBadgeEl!: HTMLElement;
+  /** 展示配置、检查点和手动压缩入口的上下文面板。 */
+  private contextPopoverEl!: HTMLElement;
   private listEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private streamingEl!: HTMLElement;
@@ -368,6 +372,10 @@ class PatchBridgeAgentElement extends HTMLElement {
 <section class="panel" part="panel">
   <header class="panel-header" part="header">
     <span class="panel-title" part="title"></span>
+    <details class="context-panel" part="context-panel">
+      <summary class="context-badge" part="context-badge">上下文待计量</summary>
+      <div class="context-popover" part="context-details"></div>
+    </details>
     <button class="icon-btn new-btn" part="new-conversation-button" title="新会话">＋ 新会话</button>
   </header>
   <div class="body">
@@ -438,6 +446,8 @@ class PatchBridgeAgentElement extends HTMLElement {
     this.attachmentBarEl = $('.attachment-bar');
     this.inputHintEl = $('.input-hint');
     this.panelTitleEl = $('.panel-title');
+    this.contextBadgeEl = $('.context-badge');
+    this.contextPopoverEl = $('.context-popover');
     // 登录失效卡片：跳转目标属于宿主配置，登录本身永远由宿主页面完成
     $('.auth-btn').addEventListener('click', () => {
       window.location.href = this.loginUrl;
@@ -494,6 +504,12 @@ class PatchBridgeAgentElement extends HTMLElement {
         this.controller?.rejectTool();
       } else if (target.dataset.action === 'abort') {
         this.controller?.abort();
+      }
+    });
+    this.contextPopoverEl.addEventListener('click', event => {
+      const target = event.target as HTMLElement;
+      if (target.dataset.action === 'compact-context') {
+        void this.controller?.compactContext();
       }
     });
     this.errorEl.addEventListener('click', event => {
@@ -609,12 +625,49 @@ class PatchBridgeAgentElement extends HTMLElement {
     this.panelTitleEl.textContent = this.panelTitle;
     this.renderConversations(state);
     this.renderMessages(state);
+    this.renderContextWindow(state);
     this.renderStreaming(state);
     this.renderStatusBar(state);
     this.renderRunOutcome(state);
     this.renderErrorBar(state);
     this.renderAuthRequired(state);
     this.renderInputArea(state);
+  }
+
+  /**
+   * 展示服务端模型窗口、当前计量与最近检查点；摘要只在该调试面板出现，
+   * 不伪装成聊天消息，也不参与消息区渲染。
+   */
+  private renderContextWindow(state: AgentState): void {
+    const percentage = state.contextWindow.percentage;
+    this.contextBadgeEl.textContent = percentage == null
+      ? '上下文待计量'
+      : `上下文 ${Math.round(percentage * 100)}%`;
+    const configuration = state.contextConfiguration;
+    if (configuration == null) {
+      this.contextPopoverEl.textContent = '正在读取模型窗口配置…';
+      return;
+    }
+    const current = state.contextWindow.currentTokens;
+    const source = state.contextWindow.source === 'estimated' ? '压缩后估算' : 'Provider';
+    const checkpoint = state.modelContext.checkpoint;
+    const idle = busyLabel(state.status) == null;
+    const canCompact = idle
+      && current != null
+      && state.contextWindow.compactable;
+    const progress = percentage == null ? 0 : Math.round(percentage * 100);
+    this.contextPopoverEl.innerHTML = `
+      <div class="context-row"><span>当前</span><b>${current == null ? '等待首次模型计量' : `${formatTokens(current)} · ${source}`}</b></div>
+      <div class="context-row"><span>窗口</span><b>${formatTokens(configuration.contextWindowTokens)}</b></div>
+      <div class="context-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
+        <span style="width:${progress}%"></span>
+      </div>
+      <div class="context-note">达到 ${formatTokens(configuration.automaticThresholdTokens)}（80%）自动压缩；保留近期 ${formatTokens(configuration.keepRecentTokens)}</div>
+      ${checkpoint == null ? '<div class="context-note">尚未生成压缩检查点</div>' : `
+        <div class="context-row"><span>已压缩</span><b>${checkpoint.compactionCount} 次 · ${checkpoint.trigger === 'manual' ? '手动' : '自动'}</b></div>
+        <div class="context-note">${formatTokens(checkpoint.tokensBefore)} → 约 ${formatTokens(checkpoint.estimatedTokensAfter)} · ${escapeHtml(formatTimestamp(checkpoint.compactedAt))}</div>
+        <details class="checkpoint-summary"><summary>查看最近摘要</summary><pre>${escapeHtml(checkpoint.summary)}</pre></details>`}
+      <button class="context-compact-btn" part="context-compact-button" data-action="compact-context"${canCompact ? '' : ' disabled'}>立即压缩</button>`;
   }
 
   private renderConversations(state: AgentState): void {
@@ -698,7 +751,9 @@ class PatchBridgeAgentElement extends HTMLElement {
       return;
     }
     this.statusEl.hidden = false;
-    const canAbort = state.status === 'streaming' || state.status === 'calling-tool';
+    const canAbort = state.status === 'streaming'
+      || state.status === 'calling-tool'
+      || state.status === 'compacting-context';
     this.statusEl.innerHTML = `<span class="busy">${busyText}</span>${
       canAbort ? '<button class="link-btn" data-action="abort">停止</button>' : ''
     }`;
@@ -749,7 +804,9 @@ class PatchBridgeAgentElement extends HTMLElement {
     // 附件按钮与输入框同策略：忙碌 / 失效期间不允许追加图片
     this.attachButtonEl.disabled = busy || authRequired;
     // 流式期间发送按钮切换为停止按钮，避免用户在禁用状态下失去中断手段
-    if (state.status === 'streaming' || state.status === 'calling-tool') {
+    if (state.status === 'streaming'
+      || state.status === 'calling-tool'
+      || state.status === 'compacting-context') {
       this.sendButtonEl.textContent = '停止';
       this.sendButtonEl.disabled = false;
       this.sendButtonEl.onclick = () => this.controller?.abort();
@@ -837,12 +894,29 @@ function busyLabel(status: AgentStatus2): string | null {
     case 'loading-conversations': return '正在加载会话列表…';
     case 'loading-conversation': return '正在加载会话…';
     case 'loading-tools': return '正在准备工具…';
+    case 'compacting-context': return '正在压缩模型上下文…';
     case 'streaming': return '正在生成回答…';
     case 'calling-tool': return '正在执行工具…';
     case 'waiting-confirmation': return '等待确认…';
     case 'saving': return '正在保存会话…';
     default: return null;
   }
+}
+
+/** 把 token 数格式化为紧凑且仍可精确理解的界面文本。 */
+function formatTokens(value: number): string {
+  return value >= 1000
+    ? `${(value / 1000).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}k tokens`
+    : `${value.toLocaleString('zh-CN')} tokens`;
+}
+
+/** 检查点时间使用浏览器当前时区展示，非法协议值不在 View 静默修正。 */
+function formatTimestamp(value: string): string {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new Error(`上下文检查点时间格式非法: ${value}`);
+  }
+  return timestamp.toLocaleString('zh-CN');
 }
 
 /** 从 agent 包重导出的状态类型别名（避免渲染函数签名依赖推断）。 */
@@ -924,6 +998,7 @@ const STYLES = `
   --patchbridge-agent-color-header-button-hover: rgba(255, 255, 255, .2);
   --patchbridge-agent-color-remove-button: rgba(17, 24, 39, .65);
   --patchbridge-agent-color-remove-button-hover: rgba(17, 24, 39, .85);
+  --patchbridge-agent-shadow-popover: 0 12px 32px rgba(15, 23, 42, .18);
 
   --patchbridge-agent-spacing-2xs: 2px;
   --patchbridge-agent-spacing-xs: 4px;
@@ -966,6 +1041,52 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, [data-conve
   flex: 1; font-size: var(--patchbridge-agent-font-size-title);
   font-weight: var(--patchbridge-agent-font-weight-emphasis);
 }
+.context-panel { position: relative; flex: none; }
+.context-badge {
+  list-style: none; cursor: pointer; white-space: nowrap;
+  padding: var(--patchbridge-agent-spacing-sm) var(--patchbridge-agent-spacing-lg);
+  border-radius: 999px; font-size: var(--patchbridge-agent-font-size-small);
+  background: var(--patchbridge-agent-color-header-button-hover);
+}
+.context-badge::-webkit-details-marker { display: none; }
+.context-popover {
+  position: absolute; z-index: 10; top: calc(100% + var(--patchbridge-agent-spacing-md)); right: 0;
+  width: min(340px, 82vw); padding: var(--patchbridge-agent-spacing-2xl);
+  border: var(--patchbridge-agent-border-width) solid var(--patchbridge-agent-color-border);
+  border-radius: var(--patchbridge-agent-radius-lg);
+  background: var(--patchbridge-agent-color-background);
+  color: var(--patchbridge-agent-color-text);
+  box-shadow: var(--patchbridge-agent-shadow-popover);
+  font-size: var(--patchbridge-agent-font-size-small);
+}
+.context-row {
+  display: flex; justify-content: space-between; gap: var(--patchbridge-agent-spacing-xl);
+  margin-bottom: var(--patchbridge-agent-spacing-md);
+}
+.context-row span, .context-note { color: var(--patchbridge-agent-color-text-muted); }
+.context-progress {
+  height: 7px; overflow: hidden; margin: var(--patchbridge-agent-spacing-md) 0;
+  border-radius: 999px; background: var(--patchbridge-agent-color-surface-muted);
+}
+.context-progress span {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--patchbridge-agent-color-primary);
+}
+.context-note { line-height: 1.5; margin: var(--patchbridge-agent-spacing-md) 0; }
+.checkpoint-summary { margin: var(--patchbridge-agent-spacing-lg) 0; }
+.checkpoint-summary summary { cursor: pointer; color: var(--patchbridge-agent-color-primary); }
+.checkpoint-summary pre {
+  max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  padding: var(--patchbridge-agent-spacing-md); margin: var(--patchbridge-agent-spacing-md) 0;
+  border-radius: var(--patchbridge-agent-radius-md);
+  background: var(--patchbridge-agent-color-surface-muted);
+}
+.context-compact-btn {
+  width: 100%; padding: var(--patchbridge-agent-spacing-md);
+  border: none; border-radius: var(--patchbridge-agent-radius-md); cursor: pointer;
+  background: var(--patchbridge-agent-color-primary); color: var(--patchbridge-agent-color-on-primary);
+}
+.context-compact-btn:disabled { cursor: not-allowed; opacity: var(--patchbridge-agent-disabled-opacity); }
 .icon-btn {
   border: none; background: transparent; color: inherit; cursor: pointer;
   font-size: var(--patchbridge-agent-font-size); line-height: 1;

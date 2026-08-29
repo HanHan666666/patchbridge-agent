@@ -31,7 +31,14 @@ class ConversationContextValuesTest {
                                         MessageRole.USER,
                                         Collections.<ContentBlock>singletonList(
                                                 new TextBlock("你好")))),
-                        new ModelState("provider/v1", stateData));
+                        new ModelContext(
+                                null,
+                                null,
+                                new ModelState("provider/v1", stateData),
+                                new ModelContextUsage(
+                                        42L,
+                                        ModelContextUsage.Source.PROVIDER,
+                                        "m-1")));
 
         Map<String, Object> value = ConversationContextValues.toValue(context);
         ConversationContext restored = ConversationContextValues.fromValue(value);
@@ -39,9 +46,9 @@ class ConversationContextValuesTest {
         assertEquals(value, ConversationContextValues.toValue(restored));
     }
 
-    /** modelState 必须显式出现，缺失不能被静默解释成 null。 */
+    /** modelContext 必须显式出现，缺失不能被静默解释成空状态。 */
     @Test
-    void rejectsMissingModelState() {
+    void rejectsMissingModelContext() {
         Map<String, Object> context = new LinkedHashMap<String, Object>();
         context.put("messages", Collections.emptyList());
 
@@ -57,7 +64,9 @@ class ConversationContextValuesTest {
         message.put("content", "旧消息");
         Map<String, Object> context = new LinkedHashMap<String, Object>();
         context.put("messages", Collections.singletonList(message));
-        context.put("modelState", null);
+        context.put(
+                "modelContext",
+                ConversationContextValues.toModelContextValue(ModelContext.empty()));
 
         assertThrows(
                 IllegalArgumentException.class, () -> ConversationContextValues.fromValue(context));
@@ -68,7 +77,9 @@ class ConversationContextValuesTest {
     void rejectsUnknownContextField() {
         Map<String, Object> context = new LinkedHashMap<String, Object>();
         context.put("messages", Collections.emptyList());
-        context.put("modelState", null);
+        context.put(
+                "modelContext",
+                ConversationContextValues.toModelContextValue(ModelContext.empty()));
         context.put("fallbackMessages", Collections.emptyList());
 
         assertThrows(

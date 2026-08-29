@@ -27,3 +27,4 @@ Accepted ADR 的决策发生变化时，应新增 ADR 并把旧 ADR 标记为 `S
 | [ADR-0001](0001-provider-neutral-runtime.md) | 厂商中立 Agent Runtime 核心契约 | Accepted | Message + ContentBlock、ModelState 分离、Provider 独占厂商协议、Tool 快照、单次 Execution、有限扩展点 |
 | [ADR-0002](0002-model-state-lifecycle.md) | ModelState 生命周期所有权与显式会话连续状态重置 | Accepted（实现排期 R2） | Provider 返回完整下一状态或 `null`；Runtime 不推测生命周期；用户显式重置状态并推进 revision |
 | [ADR-0003](0003-browser-runtime-guards.md) | Browser Agent Runtime 生产级执行守卫 | Accepted（已实施） | 停止原因/Tool 决策、整批预检、五项执行限额、唯一 Outcome、取消/Deadline 迟到隔离、Tool 错误分类、Provider 契约测试 |
+| [ADR-0004](0004-context-compaction.md) | 完整聊天历史与模型工作上下文分离的压缩机制 | Accepted（已实施） | 80% 自动触发、当前模型摘要、近期原始消息、Provider 状态投影、手动入口和失败原子性 |

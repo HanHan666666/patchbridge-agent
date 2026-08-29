@@ -40,6 +40,23 @@ export type {
   ModelUsage,
 } from './clients/modelClient';
 export { HttpModel } from './clients/modelClient';
+export type {
+  ContextCompactionGateway,
+  ContextCompactionRequest,
+  ContextCompactionResult,
+} from './clients/contextCompactionClient';
+export { HttpContextCompactionGateway } from './clients/contextCompactionClient';
+export type {
+  ContextManager,
+  ContextManagerOptions,
+  PrepareModelContextInput,
+  PreparedModelContext,
+} from './contextManager';
+export {
+  DefaultContextManager,
+  EMPTY_MODEL_CONTEXT,
+  inspectContextWindow,
+} from './contextManager';
 export type { ToolClient, ToolCallContext } from './clients/toolClient';
 export { HttpToolClient } from './clients/toolClient';
 export type {

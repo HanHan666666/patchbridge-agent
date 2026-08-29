@@ -97,7 +97,11 @@
         {
           "type": "message-stop",
           "stopReason": "tool-use",
-          "usage": null,
+          "usage": {
+            "inputTokens": 9,
+            "outputTokens": 3,
+            "totalTokens": 12
+          },
           "modelState": null
         }
       ]

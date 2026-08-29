@@ -25,6 +25,7 @@ import io.patchbridge.agent.core.model.ModelProvider;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelUsage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,6 +63,7 @@ import java.nio.file.Paths;
             "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
             "patchbridge-agent.model.base-url=http://localhost:0/v1",
             "patchbridge-agent.model.model=fake-model",
+            "patchbridge-agent.model.context-window-tokens=128000",
             "patchbridge-agent.mcp.enabled=true",
             "patchbridge-agent.mcp.source=properties"
         })
@@ -249,6 +251,60 @@ class PatchBridgeAgentStarterIntegrationTest {
                 "Tool Core 事件经生产 Controller 序列化后必须逐帧匹配共享契约");
     }
 
+    /** 模型配置端点只公开服务端派生的窗口、80% 阈值和近期预算。 */
+    @Test
+    void contextCompactionConfigurationExposesDerivedBudgets() throws Exception {
+        login("ai:chat:use");
+
+        mockMvc.perform(get("/ai/model/config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contextWindowTokens").value(128000))
+                .andExpect(jsonPath("$.automaticThresholdTokens").value(102400))
+                .andExpect(jsonPath("$.keepRecentTokens").value(20000));
+    }
+
+    /** 手动压缩端点复用当前模型，并原子返回摘要 usage 与 Provider 状态投影。 */
+    @Test
+    void contextCompactionUsesCurrentModelAndReturnsAtomicResult() throws Exception {
+        login("ai:chat:use");
+        MvcResult started =
+                mockMvc.perform(
+                                post("/ai/model/compact")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                "{\"traceId\":\"trace-compact\","
+                                                    + "\"conversationId\":\"conversation-1\","
+                                                    + "\"request\":{\"trigger\":\"manual\","
+                                                    + "\"messagesToSummarize\":["
+                                                    + textMessageJson("system-1", "system", "系统规则")
+                                                    + ","
+                                                    + textMessageJson("user-old", "user", "旧问题")
+                                                    + "],\"retainedMessages\":["
+                                                    + textMessageJson("system-1", "system", "系统规则")
+                                                    + ","
+                                                    + textMessageJson("user-new", "user", "近期问题")
+                                                    + "],\"previousSummary\":null,"
+                                                    + "\"modelState\":null,"
+                                                    + "\"responseMessageId\":\"summary-response\","
+                                                    + "\"splitTurn\":false}}"))
+                        .andReturn();
+
+        assertTrue(started.getRequest().isAsyncStarted());
+        mockMvc.perform(asyncDispatch(started))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.summary").value("答案完成"))
+                .andExpect(jsonPath("$.usage.inputTokens").value(7))
+                .andExpect(jsonPath("$.usage.outputTokens").value(4))
+                .andExpect(jsonPath("$.usage.totalTokens").value(11))
+                .andExpect(jsonPath("$.modelState").doesNotExist());
+    }
+
+    /** 构造压缩端点使用的稳定单文本消息 JSON。 */
+    private static String textMessageJson(String id, String role, String text) {
+        return "{\"id\":\"" + id + "\",\"role\":\"" + role
+                + "\",\"blocks\":[{\"type\":\"text\",\"text\":\"" + text + "\"}]}";
+    }
+
     /** 通过 MockMvc 异步派发完整消费一条生产 SSE 响应。 */
     private String requestModelStream(String responseMessageId) throws Exception {
         MvcResult started =
@@ -419,8 +475,11 @@ class PatchBridgeAgentStarterIntegrationTest {
                                         "{\"revision\":0,\"context\":{"
                                             + "\"messages\":[{\"id\":\"m-user-1\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"hi\"}]}],"
+                                            + "\"modelContext\":{\"checkpoint\":null,"
+                                            + "\"firstRetainedMessageId\":null,"
                                             + "\"modelState\":{\"format\":\"test-provider/v1\","
-                                            + "\"data\":{\"opaque\":\"state-1\"}}}}"))
+                                            + "\"data\":{\"opaque\":\"state-1\"}},"
+                                            + "\"usage\":null}}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversation.revision").value(1));
 
@@ -432,7 +491,9 @@ class PatchBridgeAgentStarterIntegrationTest {
                                         "{\"revision\":0,\"context\":{"
                                             + "\"messages\":[{\"id\":\"m-stale\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"stale\"}]}],"
-                                            + "\"modelState\":null}}"))
+                                            + "\"modelContext\":{\"checkpoint\":null,"
+                                            + "\"firstRetainedMessageId\":null,"
+                                            + "\"modelState\":null,\"usage\":null}}}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("CONVERSATION_CONFLICT"));
 
@@ -441,8 +502,10 @@ class PatchBridgeAgentStarterIntegrationTest {
                 .andExpect(jsonPath("$.conversation.revision").value(1))
                 .andExpect(jsonPath("$.context.messages[0].id").value("m-user-1"))
                 .andExpect(jsonPath("$.context.messages[0].blocks[0].text").value("hi"))
-                .andExpect(jsonPath("$.context.modelState.format").value("test-provider/v1"))
-                .andExpect(jsonPath("$.context.modelState.data.opaque").value("state-1"))
+                .andExpect(jsonPath("$.context.modelContext.modelState.format")
+                        .value("test-provider/v1"))
+                .andExpect(jsonPath("$.context.modelContext.modelState.data.opaque")
+                        .value("state-1"))
                 .andExpect(jsonPath("$.messages").doesNotExist());
     }
 
@@ -519,7 +582,8 @@ class PatchBridgeAgentStarterIntegrationTest {
                 public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
                     if ("assistant-tool".equals(request.getResponseMessageId())) {
                         replayToolContract(listener);
-                    } else if ("assistant-text".equals(request.getResponseMessageId())) {
+                    } else if ("assistant-text".equals(request.getResponseMessageId())
+                            || "summary-response".equals(request.getResponseMessageId())) {
                         replayTextContract(listener);
                     } else {
                         throw new IllegalArgumentException(
@@ -529,6 +593,17 @@ class PatchBridgeAgentStarterIntegrationTest {
                     listener.onCompleted();
                     return () -> {};
                 }
+            };
+        }
+
+        /** 测试模型不产生私有状态，因此压缩边界只能投影明确的空状态。 */
+        @Bean
+        public ModelStateProjector fakeModelStateProjector() {
+            return (state, retainedMessages) -> {
+                if (state != null) {
+                    throw new IllegalArgumentException("测试模型不支持非空 ModelState");
+                }
+                return null;
             };
         }
 
@@ -577,7 +652,10 @@ class PatchBridgeAgentStarterIntegrationTest {
                             ModelBlockDeltaEvent.Delta.toolCall("\":\"DEV-1\"}")));
             listener.onEvent(new ModelBlockStopEvent(0));
             listener.onEvent(
-                    new ModelMessageStopEvent(ModelStopReason.TOOL_USE, null, null));
+                    new ModelMessageStopEvent(
+                            ModelStopReason.TOOL_USE,
+                            null,
+                            new ModelUsage(9L, 3L, 12L)));
         }
 
         @Bean

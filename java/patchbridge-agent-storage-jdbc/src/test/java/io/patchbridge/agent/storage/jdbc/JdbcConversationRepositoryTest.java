@@ -11,6 +11,8 @@ import io.patchbridge.agent.core.conversation.ConversationContext;
 import io.patchbridge.agent.core.conversation.ConversationContextValues;
 import io.patchbridge.agent.core.conversation.ConversationNotFoundException;
 import io.patchbridge.agent.core.conversation.ConversationSnapshot;
+import io.patchbridge.agent.core.conversation.ModelContext;
+import io.patchbridge.agent.core.conversation.ModelContextUsage;
 import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.core.model.ContentBlock;
 import io.patchbridge.agent.core.model.ImageBlock;
@@ -41,7 +43,7 @@ import java.util.Map;
 /**
  * JDBC Conversation 聚合测试。
  *
- * <p>覆盖消息与 ModelState 同 revision 原子保存、ContentBlock 结构往返、状态清除、 乐观锁、ownerKey 存储隔离以及损坏数据显式失败，不测试任何旧
+ * <p>覆盖消息与 ModelContext 同 revision 原子保存、ContentBlock 结构往返、工作上下文重置、乐观锁、ownerKey 存储隔离以及损坏数据显式失败，不测试任何旧
  * payload 兼容行为。
  */
 class JdbcConversationRepositoryTest {
@@ -78,7 +80,10 @@ class JdbcConversationRepositoryTest {
                 repository.findSnapshot(tenantAOwner, created.getConversationId());
         assertEquals("设备对话", loaded.getConversation().getTitle());
         assertTrue(loaded.getContext().getMessages().isEmpty());
-        assertNull(loaded.getContext().getModelState());
+        assertEquals(
+                ConversationContextValues.toModelContextValue(ModelContext.empty()),
+                ConversationContextValues.toModelContextValue(
+                        loaded.getContext().getModelContext()));
         assertNull(repository.findSnapshot(tenantBOwner, created.getConversationId()));
         assertTrue(repository.listByOwner(tenantBOwner, 10).isEmpty());
     }
@@ -101,16 +106,16 @@ class JdbcConversationRepositoryTest {
                 ConversationContextValues.toValue(loaded.getContext()));
     }
 
-    /** 第二次保存全量替换消息，并且显式 null 会清除旧 ModelState。 */
+    /** 第二次保存全量替换消息，并且显式空 ModelContext 会清除旧工作状态。 */
     @Test
-    void replacesMessagesAndClearsModelState() throws Exception {
+    void replacesMessagesAndClearsModelContext() throws Exception {
         Conversation created = repository.create("u1", null);
         repository.save("u1", created.getConversationId(), 0, null, completeContext("state-1"));
         ConversationContext replacement =
                 new ConversationContext(
                         Collections.singletonList(
                                 textMessage("replacement", MessageRole.USER, "继续")),
-                        null);
+                        ModelContext.empty());
 
         repository.save("u1", created.getConversationId(), 1, null, replacement);
         ConversationSnapshot loaded = repository.findSnapshot("u1", created.getConversationId());
@@ -119,11 +124,14 @@ class JdbcConversationRepositoryTest {
         assertEquals(
                 ConversationContextValues.toValue(replacement),
                 ConversationContextValues.toValue(loaded.getContext()));
-        assertNull(
+        String storedModelContext =
                 jdbc.queryForObject(
-                        "SELECT model_state_json FROM agent_conversation WHERE conversation_id = ?",
+                        "SELECT model_context_json FROM agent_conversation WHERE conversation_id = ?",
                         String.class,
-                        created.getConversationId()));
+                        created.getConversationId());
+        assertEquals(
+                ConversationContextValues.toModelContextValue(ModelContext.empty()),
+                new ObjectMapper().readValue(storedModelContext, Map.class));
     }
 
     /** 过期 revision 既不能覆盖消息，也不能覆盖或清除模型状态。 */
@@ -146,7 +154,7 @@ class JdbcConversationRepositoryTest {
                                                 Collections.singletonList(
                                                         textMessage(
                                                                 "stale", MessageRole.USER, "过期")),
-                                                null)));
+                                                ModelContext.empty())));
 
         assertEquals(1, conflict.getCurrentRevision());
         ConversationSnapshot loaded = repository.findSnapshot("u1", created.getConversationId());
@@ -188,7 +196,7 @@ class JdbcConversationRepositoryTest {
                 null,
                 new ConversationContext(
                         Collections.singletonList(textMessage("m-1", MessageRole.USER, "更新")),
-                        null));
+                        ModelContext.empty()));
 
         List<Conversation> list = repository.listByOwner("u1", 10);
         assertEquals(2, list.size());
@@ -216,7 +224,7 @@ class JdbcConversationRepositoryTest {
                 null,
                 new ConversationContext(
                         Collections.singletonList(textMessage("m-broken", MessageRole.USER, "正常")),
-                        null));
+                        ModelContext.empty()));
         jdbc.update(
                 "UPDATE agent_message SET blocks_json = ? WHERE conversation_id = ?",
                 "{not-json",
@@ -227,13 +235,13 @@ class JdbcConversationRepositoryTest {
                 () -> repository.findSnapshot("u1", created.getConversationId()));
     }
 
-    /** 持久化 ModelState 结构损坏时必须报错，不能静默丢弃后继续调用模型。 */
+    /** 持久化 ModelContext 结构损坏时必须报错，不能静默丢弃后继续调用模型。 */
     @Test
     void corruptedModelStateFailsExplicitly() throws Exception {
         Conversation created = repository.create("u1", null);
         repository.save("u1", created.getConversationId(), 0, null, completeContext("state"));
         jdbc.update(
-                "UPDATE agent_conversation SET model_state_json = ? " + "WHERE conversation_id = ?",
+                "UPDATE agent_conversation SET model_context_json = ? " + "WHERE conversation_id = ?",
                 "{\"format\":\"x\"}",
                 created.getConversationId());
 
@@ -284,7 +292,15 @@ class JdbcConversationRepositoryTest {
         nested.put("encryptedContent", "ciphertext");
         stateData.put("nested", nested);
         return new ConversationContext(
-                messages, new ModelState("openai-chat-reasoning/v1", stateData));
+                messages,
+                new ModelContext(
+                        null,
+                        null,
+                        new ModelState("openai-chat-reasoning/v1", stateData),
+                        new ModelContextUsage(
+                                120,
+                                ModelContextUsage.Source.PROVIDER,
+                                "assistant-2")));
     }
 
     /** 构造单文本块稳定消息。 */

@@ -403,6 +403,114 @@ describe('CallTraceStore', () => {
     });
   });
 
+  it('累计稳定消息在连续 tool-use 时整批回填，不把合法中间态判为引用损坏', () => {
+    const { store, ctx } = startedTraceStore('trace-consecutive-tool-use');
+    const secondAssistant: AgentMessage = Object.freeze({
+      id: 'message-2',
+      role: 'assistant',
+      blocks: Object.freeze([Object.freeze({
+        type: 'tool-call',
+        callId: 'call-2',
+        name: 'local.device_restart',
+        input: Object.freeze({ serial: 'DEV-2' }),
+      })]),
+    });
+    const secondToolResult: AgentMessage = Object.freeze({
+      id: 'message-tool-2',
+      role: 'tool',
+      blocks: Object.freeze([Object.freeze({
+        type: 'tool-result',
+        callId: 'call-2',
+        name: 'local.device_restart',
+        status: 'success',
+        content: Object.freeze([Object.freeze({ type: 'text', text: '第二台设备已重启' })]),
+      })]),
+    });
+    const finalAssistant: AgentMessage = Object.freeze({
+      id: 'message-3',
+      role: 'assistant',
+      blocks: Object.freeze([Object.freeze({ type: 'text', text: '两台设备均已处理。' })]),
+    });
+
+    store.onEvent({
+      type: 'model-call-started',
+      callIndex: 1,
+      responseMessageId: 'message-1',
+    }, ctx);
+    completeToolUseModelCall(store, ctx, 1, 'message-1');
+    store.noteCommittedMessages([assistantMessage()]);
+    store.onEvent({
+      type: 'tool-call-started',
+      callId: 'call-1',
+      toolName: 'local.device_restart',
+      arguments: { serial: 'DEV-1' },
+    }, ctx);
+    store.onEvent({
+      type: 'tool-call-completed',
+      callId: 'call-1',
+      toolName: 'local.device_restart',
+      isError: false,
+    }, ctx);
+    store.noteCommittedMessages([assistantMessage(), toolResultMessage()]);
+
+    store.onEvent({
+      type: 'model-call-started',
+      callIndex: 2,
+      responseMessageId: 'message-2',
+    }, ctx);
+    completeToolUseModelCall(store, ctx, 2, 'message-2');
+    expect(() => store.noteCommittedMessages([
+      assistantMessage(),
+      toolResultMessage(),
+      secondAssistant,
+    ])).not.toThrow();
+    expect(store.snapshot().traces[0]?.records).toContainEqual(expect.objectContaining({
+      type: 'model-call',
+      callIndex: 2,
+      toolCallIds: ['call-2'],
+    }));
+
+    store.onEvent({
+      type: 'tool-call-started',
+      callId: 'call-2',
+      toolName: 'local.device_restart',
+      arguments: { serial: 'DEV-2' },
+    }, ctx);
+    store.onEvent({
+      type: 'tool-call-completed',
+      callId: 'call-2',
+      toolName: 'local.device_restart',
+      isError: false,
+    }, ctx);
+    store.noteCommittedMessages([
+      assistantMessage(),
+      toolResultMessage(),
+      secondAssistant,
+      secondToolResult,
+    ]);
+
+    completeNaturalModelCall(store, ctx, 'message-3', 3);
+    store.noteCommittedMessages([
+      assistantMessage(),
+      toolResultMessage(),
+      secondAssistant,
+      secondToolResult,
+      finalAssistant,
+    ]);
+    store.onEvent({
+      type: 'execution-completed',
+      outcome: COMPLETED_OUTCOME,
+      addedMessageCount: 5,
+    }, ctx);
+
+    expect(store.snapshot().traces[0]).toMatchObject({
+      outcome: COMPLETED_OUTCOME,
+      failed: null,
+    });
+    expect(store.snapshot().traces[0]?.records.filter(record =>
+      record.type === 'tool-call')).toHaveLength(2);
+  });
+
   it('实时采集立即拒绝重复身份与断裂 Tool 引用', () => {
     {
       const { store, ctx } = startedTraceStore('trace-duplicate-index');
@@ -483,12 +591,14 @@ describe('CallTraceStore', () => {
       };
       store.onEvent(toolStarted, ctx);
       expect(() => store.onEvent(toolStarted, ctx)).toThrow('Tool 调用 call-1 已存在');
+      const traceBeforeInvalidBatch = store.snapshot().traces[0];
       const orphaningMessage: AgentMessage = Object.freeze({
         ...assistantMessage(),
         blocks: Object.freeze([]),
       });
       expect(() => store.noteCommittedMessages([orphaningMessage]))
         .toThrow('回填破坏了 Tool 引用关系');
+      expect(store.snapshot().traces[0]).toBe(traceBeforeInvalidBatch);
       const confirmationRequested = {
         type: 'interrupt-requested' as const,
         interrupt: {

@@ -1,5 +1,5 @@
 /**
- * 稳定消息与 ModelState 的运行时快照入口。
+ * 稳定消息与 ModelContext 的运行时快照入口。
  *
  * <p>TypeScript readonly 只提供编译期约束；Controller、Runtime、Model 与宿主 View
  * 之间仍可能共享 JavaScript 对象。本文件统一深复制和冻结领域值，确保观察者或自定义
@@ -13,6 +13,7 @@ import type {
   AgentMessage,
   ContentBlock,
   ConversationContext,
+  ModelContext,
   ModelState,
 } from './types';
 
@@ -42,7 +43,19 @@ export function snapshotConversationContext(
 ): ConversationContext {
   return Object.freeze({
     messages: Object.freeze(context.messages.map(snapshotAgentMessage)),
+    modelContext: snapshotModelContext(context.modelContext),
+  });
+}
+
+/** 复制并冻结模型工作上下文，不允许 View 或 Adapter 改写检查点与用量。 */
+export function snapshotModelContext(context: ModelContext): ModelContext {
+  return Object.freeze({
+    checkpoint: context.checkpoint == null
+      ? null
+      : Object.freeze({ ...context.checkpoint }),
+    firstRetainedMessageId: context.firstRetainedMessageId,
     modelState: snapshotModelState(context.modelState),
+    usage: context.usage == null ? null : Object.freeze({ ...context.usage }),
   });
 }
 

@@ -11,6 +11,11 @@ import type { Model } from './clients/modelClient';
 import { HttpToolClient } from './clients/toolClient';
 import type { ToolClient } from './clients/toolClient';
 import type { HttpTransport } from './clients/http';
+import {
+  HttpContextCompactionGateway,
+  type ContextCompactionGateway,
+} from './clients/contextCompactionClient';
+import { DefaultContextManager } from './contextManager';
 import { DefaultAgentController } from './controller';
 import type { AgentEngine } from './engine';
 import {
@@ -39,10 +44,12 @@ export interface CreateAgentControllerOptions {
   /** 完整替换默认厂商中立 Model；不能与自定义 engine 同时提供。 */
   model?: Model;
   /** 默认 Runtime 扩展配置；limits 可逐项覆盖工厂文档化的有界默认值。 */
-  runtime?: Omit<DefaultAgentRuntimeOptions, 'limits'> & {
+  runtime?: Omit<DefaultAgentRuntimeOptions, 'limits' | 'contextManager'> & {
     /** 只覆盖有明确宿主需求的预算；未出现的字段使用统一工厂默认值。 */
     readonly limits?: Partial<AgentExecutionLimits>;
   };
+  /** 替换默认上下文压缩 HTTP 端口；自动与手动压缩仍共享同一 ContextManager。 */
+  contextCompactionGateway?: ContextCompactionGateway;
   /** 替换默认后端 Tool Client，仍由默认 Registry 包装为 Backend Provider。 */
   toolClient?: ToolClient;
   /**
@@ -85,6 +92,10 @@ export function createAgentController(
   ]);
   const conversations =
     options.conversationClient ?? new HttpConversationClient(endpoint, options.transport);
+  const contextManager = new DefaultContextManager(
+    options.contextCompactionGateway
+      ?? new HttpContextCompactionGateway(endpoint, options.transport),
+  );
   // 轨迹采集是显式 opt-in：未配置时不创建存储、不追加默认 Hook，生产默认零采集。
   const callTrace = options.callTrace == null
     ? null
@@ -96,6 +107,7 @@ export function createAgentController(
     options.model ?? new HttpModel(endpoint, options.transport),
     {
       ...options.runtime,
+      contextManager,
       // 内部轨迹必须先于宿主 Hook 观察事件：即使宿主在 execution-started 抛错，
       // 轨迹也已经建立，随后仍能用同一次 execution-failed 正常封闭失败事实。
       hooks: callTrace == null
@@ -111,6 +123,7 @@ export function createAgentController(
     engine,
     conversations,
     tools,
+    contextManager,
     storageKey: options.storageKey,
     // 自定义 Engine 不接入生命周期 Hook：显式开启时 Store 仍可作为数据源暴露，
     // 由宿主自行接线喂给过程事实；未开启时为 null，Controller 暴露显式空源。

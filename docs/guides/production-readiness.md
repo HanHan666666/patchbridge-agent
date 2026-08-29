@@ -128,6 +128,7 @@ Audit 默认 enabled，默认 payload-mode=metadata-only。full 模式也先经�
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 启动提示 model base-url/model 未配置 | 使用默认 Provider 但缺配置 | 注入两个值或提供自定义 ModelProvider |
+| 启动提示 context-window-tokens 未配置 | 缺少模型窗口硬配置 | 注入所选模型的真实上下文窗口；框架不按模型名猜测 |
 | 启动 WARN <code>PBA-CFG-001</code> | 默认 Provider 未配置 api-key，不会发送 Authorization | 目标网关需要认证时配置 <code>patchbridge-agent.model.api-key</code> |
 | 启动 WARN <code>PBA-CFG-002</code> | MCP 开启且默认 properties 源没有任何 Server | 配置 <code>patchbridge-agent.mcp.servers</code> 或显式关闭 MCP |
 | 启动 WARN <code>PBA-CFG-003</code> | 仍在使用默认仅认证 ToolAccessPolicy | 注册宿主策略映射 RBAC/ACL，或确认接受默认语义 |
@@ -143,6 +144,8 @@ Audit 默认 enabled，默认 payload-mode=metadata-only。full 模式也先经�
 | MCP test 200 且 ok=false | test 以业务结果返回失败 | 读取 body error，不只看 HTTP 状态 |
 | MCP missing 返回 502 | 当前缺独立 404 映射 | 不把它自动当作可重试远端故障 |
 | SSE HTTP 200 后出现 error | 流已建立，错误在 data JSON | 消费 type=error，不只看 HTTP 状态 |
+| 正常模型响应因 usage 缺失失败 | Provider 未返回上下文窗口计量 | 修复 Provider / 网关返回完整 usage；不能用字符估算替代 |
+| 上下文压缩失败 | 摘要、状态投影、取消或会话 revision 冲突 | 保留旧上下文，修复明确错误或重新加载；框架不自动重试或清空状态 |
 | MODEL_PROTOCOL_ERROR | 缺 message-stop、Block 未关闭或字段不精确 | 核对 Starter 与 Browser Bundle 版本 |
 | AGENT_MAX_MODEL_CALLS / AGENT_MAX_TOOL_CALLS | 本轮将超过模型或 Tool 次数预算 | 检查是否存在无限 Tool Loop；确有业务需要时再调整 runtime.limits |
 | AGENT_EXECUTION_TIMEOUT | 模型、Tool 或确认等待超过整轮 Deadline | 定位不合作上游或用户交互时间；不把它当成用户主动取消 |

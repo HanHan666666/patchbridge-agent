@@ -30,7 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
                 "patchbridge-agent.mcp.source=jdbc",
                 // 模型网关默认 Provider 是硬依赖，与本测试的 MCP 边界无关
                 "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                "patchbridge-agent.model.model=fake-model"
+                "patchbridge-agent.model.model=fake-model",
+                "patchbridge-agent.model.context-window-tokens=128000"
         })
 class McpDisabledAutoConfigurationIntegrationTest {
 

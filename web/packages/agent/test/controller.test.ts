@@ -11,6 +11,7 @@ import type {
 } from '../src/clients/conversationClient';
 import type { ToolClient } from '../src/clients/toolClient';
 import { DefaultAgentController } from '../src/controller';
+import type { ContextManager } from '../src/contextManager';
 import type {
   AgentEngine,
   AgentExecution,
@@ -27,6 +28,7 @@ import type {
   ModelState,
   ToolDefinition,
 } from '../src/types';
+import { testContextManager, testModelContext } from './testContext';
 
 /** 单次可控执行句柄，事件、完成和取消都明确绑定自身。 */
 class FakeExecution implements AgentExecution {
@@ -94,7 +96,7 @@ class FakeExecution implements AgentExecution {
     this.cancelCount += 1;
     this.finish({
       messages: [],
-      modelState: this.input.conversation.modelState,
+      modelContext: this.input.conversation.modelContext,
       outcome: { type: 'cancelled' },
     });
   }
@@ -135,7 +137,7 @@ class FakeEngine implements AgentEngine {
 interface SavedConversation {
   /** 保存目标会话。 */
   readonly id: string;
-  /** 消息与 ModelState 同属的完整保存体。 */
+  /** 完整消息与 ModelContext 同属的完整保存体。 */
   readonly body: ConversationSaveBody;
 }
 
@@ -154,7 +156,7 @@ class FakeConversationClient implements ConversationClient {
     conversation: conversation(id, 5),
     context: {
       messages: [textMessage(`user-${id}`, 'user', `会话 ${id}`)],
-      modelState: null,
+      modelContext: testModelContext(),
     },
   });
   /** 自定义会话保存逻辑。 */
@@ -251,7 +253,7 @@ function confirmationTool(): ToolDefinition {
 }
 
 /** 创建完整 Controller 测试夹具。 */
-function makeController(): {
+function makeController(contextManager: ContextManager = testContextManager()): {
   readonly engine: FakeEngine;
   readonly conversations: FakeConversationClient;
   readonly toolClient: FakeToolClient;
@@ -261,7 +263,12 @@ function makeController(): {
   const conversations = new FakeConversationClient();
   const toolClient = new FakeToolClient();
   const tools = new DefaultToolRegistry([new BackendToolProvider(toolClient)]);
-  const controller = new DefaultAgentController({ engine, conversations, tools });
+  const controller = new DefaultAgentController({
+    engine,
+    conversations,
+    tools,
+    contextManager,
+  });
   return { engine, conversations, toolClient, controller };
 }
 
@@ -285,6 +292,38 @@ const COMPLETED_OUTCOME = {
   stopReason: 'end-turn',
 } as const;
 
+/** 创建可手动压缩的测试 ModelContext。 */
+function compactableModelContext(): ReturnType<typeof testModelContext> & {
+  readonly usage: NonNullable<ReturnType<typeof testModelContext>['usage']>;
+} {
+  return Object.freeze({
+    ...testModelContext(MODEL_STATE),
+    usage: Object.freeze({
+      totalTokens: 900,
+      source: 'provider' as const,
+      measuredThroughMessageId: 'assistant-recent',
+    }),
+  });
+}
+
+/** 创建小窗口手动压缩测试所需的 ContextManager。 */
+function manualCompactionManager(
+  compact: ContextManager['compact'],
+): ContextManager {
+  const base = testContextManager();
+  const configuration = Object.freeze({
+    contextWindowTokens: 1_000,
+    automaticThresholdTokens: 800,
+    keepRecentTokens: 40,
+  });
+  return {
+    ...base,
+    loadConfiguration: async () => configuration,
+    getConfiguration: () => configuration,
+    compact,
+  };
+}
+
 describe('DefaultAgentController', () => {
   it('subscribe 立即推送唯一状态源的当前快照', () => {
     const { controller } = makeController();
@@ -307,7 +346,7 @@ describe('DefaultAgentController', () => {
     });
   });
 
-  it('消费 Execution 事件并把消息与 ModelState 作为一个 context 原子保存', async () => {
+  it('消费 Execution 事件并把完整消息与 ModelContext 作为一个 context 原子保存', async () => {
     const { engine, conversations, controller } = makeController();
     const states: AgentState[] = [];
     controller.subscribe(state => states.push(state));
@@ -321,11 +360,11 @@ describe('DefaultAgentController', () => {
     execution.emit({
       type: 'messages',
       messages: [assistant],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
     });
     execution.finish({
       messages: [assistant],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: COMPLETED_OUTCOME,
     });
     await sending;
@@ -352,13 +391,13 @@ describe('DefaultAgentController', () => {
         revision: 0,
         context: {
           messages: [user, assistant],
-          modelState: MODEL_STATE,
+          modelContext: testModelContext(MODEL_STATE),
         },
       },
     });
     expect(controller.getState()).toMatchObject({
       status: 'done',
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       runOutcome: COMPLETED_OUTCOME,
     });
   });
@@ -371,7 +410,7 @@ describe('DefaultAgentController', () => {
 
     execution.finish({
       messages: [assistant],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: { type: 'max-tokens' },
     });
     await sending;
@@ -380,11 +419,11 @@ describe('DefaultAgentController', () => {
     expect(conversations.saved).toHaveLength(1);
     expect(conversations.saved[0]?.body.context).toEqual({
       messages: [execution.input.conversation.messages.at(-1), assistant],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
     });
     expect(controller.getState()).toMatchObject({
       status: 'done',
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       runOutcome: { type: 'max-tokens' },
     });
   });
@@ -397,7 +436,7 @@ describe('DefaultAgentController', () => {
 
     execution.finish({
       messages: [stable],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: { type: 'cancelled' },
     });
     await sending;
@@ -407,7 +446,7 @@ describe('DefaultAgentController', () => {
     expect(controller.getState()).toMatchObject({
       status: 'done',
       messages: [execution.input.conversation.messages.at(-1), stable],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       runOutcome: { type: 'cancelled' },
     });
   });
@@ -417,24 +456,107 @@ describe('DefaultAgentController', () => {
     const history = textMessage('user-history', 'user', '历史');
     conversations.getImpl = async id => ({
       conversation: conversation(id, 12, '旧会话'),
-      context: { messages: [history], modelState: MODEL_STATE },
+      context: { messages: [history], modelContext: testModelContext(MODEL_STATE) },
     });
     await controller.loadConversation('conversation-7');
 
     expect(controller.getState().messages).toEqual([history]);
-    expect(controller.getState().modelState).toEqual(MODEL_STATE);
+    expect(controller.getState().modelContext.modelState).toEqual(MODEL_STATE);
 
     const sending = controller.sendMessage('继续');
     const execution = await waitForExecution(engine);
-    expect(execution.input.conversation.modelState).toEqual(MODEL_STATE);
+    expect(execution.input.conversation.modelContext.modelState).toEqual(MODEL_STATE);
     expect(execution.input.conversation.messages[0]).toEqual(history);
     execution.finish({
       messages: [],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: COMPLETED_OUTCOME,
     });
     await sending;
     expect(conversations.saved[0]?.body.revision).toBe(12);
+  });
+
+  it('手动摘要失败时完整历史与原 ModelContext 保持原子不变', async () => {
+    const failure = new Error('摘要模型失败');
+    const compact = vi.fn<ContextManager['compact']>(async () => { throw failure; });
+    const { conversations, controller } = makeController(manualCompactionManager(compact));
+    const originalContext = {
+      messages: [
+        textMessage('user-old', 'user', '旧问题'.repeat(100)),
+        textMessage('assistant-old', 'assistant', '旧答案'.repeat(100)),
+        textMessage('user-recent', 'user', '近期问题'),
+        textMessage('assistant-recent', 'assistant', '近期答案'),
+      ],
+      modelContext: compactableModelContext(),
+    };
+    conversations.getImpl = async id => ({
+      conversation: conversation(id, 4, '压缩测试'),
+      context: originalContext,
+    });
+    await controller.initialize();
+    await controller.loadConversation('conversation-compact');
+
+    await controller.compactContext();
+
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(conversations.saved).toEqual([]);
+    expect(controller.getState()).toMatchObject({
+      status: 'error',
+      messages: originalContext.messages,
+      modelContext: originalContext.modelContext,
+      error: { message: '摘要模型失败' },
+    });
+  });
+
+  it('摘要成功但会话保存失败时不提前提交候选 ModelContext', async () => {
+    const originalModelContext = compactableModelContext();
+    const candidateModelContext = Object.freeze({
+      checkpoint: Object.freeze({
+        id: 'checkpoint-1',
+        summary: '候选摘要',
+        trigger: 'manual' as const,
+        compactedAt: '2026-08-27T08:00:00.000Z',
+        tokensBefore: 900,
+        estimatedTokensAfter: 120,
+        compactionCount: 1,
+      }),
+      firstRetainedMessageId: 'user-recent',
+      modelState: null,
+      usage: Object.freeze({
+        totalTokens: 120,
+        source: 'estimated' as const,
+        measuredThroughMessageId: 'assistant-recent',
+      }),
+    });
+    const compact = vi.fn<ContextManager['compact']>(async current => Object.freeze({
+      messages: current.messages,
+      modelContext: candidateModelContext,
+    }));
+    const { conversations, controller } = makeController(manualCompactionManager(compact));
+    const messages = [
+      textMessage('user-old', 'user', '旧问题'.repeat(100)),
+      textMessage('assistant-old', 'assistant', '旧答案'.repeat(100)),
+      textMessage('user-recent', 'user', '近期问题'),
+      textMessage('assistant-recent', 'assistant', '近期答案'),
+    ];
+    conversations.getImpl = async id => ({
+      conversation: conversation(id, 4, '压缩测试'),
+      context: { messages, modelContext: originalModelContext },
+    });
+    conversations.saveImpl = async () => { throw new Error('保存失败'); };
+    await controller.initialize();
+    await controller.loadConversation('conversation-compact');
+
+    await controller.compactContext();
+
+    expect(conversations.saved[0]?.body.context.modelContext)
+      .toEqual(candidateModelContext);
+    expect(controller.getState()).toMatchObject({
+      status: 'error',
+      messages,
+      modelContext: originalModelContext,
+      error: { message: '保存失败' },
+    });
   });
 
   it('Tool Confirmation 通过 Execution.respond 精确处理批准与拒绝', async () => {
@@ -470,7 +592,7 @@ describe('DefaultAgentController', () => {
       expect(controller.getState().pendingConfirmation).toBeNull();
       execution.finish({
         messages: [],
-        modelState: null,
+        modelContext: testModelContext(),
         outcome: COMPLETED_OUTCOME,
       });
       await sending;
@@ -489,7 +611,7 @@ describe('DefaultAgentController', () => {
     execution.emit({
       type: 'messages',
       messages: [textMessage('assistant-late', 'assistant', '迟到结果')],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
     });
 
     expect(execution.cancelCount).toBe(1);
@@ -498,10 +620,28 @@ describe('DefaultAgentController', () => {
     expect(controller.getState().messages).toEqual([
       execution.input.conversation.messages.at(-1),
     ]);
-    expect(controller.getState().modelState).toBeNull();
+    expect(controller.getState().modelContext.modelState).toBeNull();
     expect(controller.getState().runOutcome).toEqual({ type: 'cancelled' });
     expect(conversations.createdTitles).toEqual([]);
     expect(conversations.saved).toEqual([]);
+  });
+
+  it('自动压缩阶段停止会取消所属 Execution 而不是只处理手动摘要', async () => {
+    const { engine, conversations, controller } = makeController();
+    const sending = controller.sendMessage('达到窗口阈值后的长回答');
+    const execution = await waitForExecution(engine);
+    execution.emit({ type: 'status', status: 'compacting-context' });
+
+    controller.abort();
+    await sending;
+
+    expect(execution.cancelCount).toBe(1);
+    expect(conversations.createdTitles).toEqual([]);
+    expect(conversations.saved).toEqual([]);
+    expect(controller.getState()).toMatchObject({
+      status: 'done',
+      runOutcome: { type: 'cancelled' },
+    });
   });
 
   it('ToolInspectionSource 在运行中固定为模型实际快照，结束后再跟随 Registry', async () => {
@@ -535,7 +675,7 @@ describe('DefaultAgentController', () => {
 
     execution.finish({
       messages: [],
-      modelState: null,
+      modelContext: testModelContext(),
       outcome: COMPLETED_OUTCOME,
     });
     await sending;
@@ -558,7 +698,7 @@ describe('DefaultAgentController', () => {
       conversation: conversation('conversation-b', 2),
       context: {
         messages: [textMessage('user-b', 'user', 'B')],
-        modelState: MODEL_STATE,
+        modelContext: testModelContext(MODEL_STATE),
       },
     });
     await loadB;
@@ -566,7 +706,7 @@ describe('DefaultAgentController', () => {
       conversation: conversation('conversation-a', 1),
       context: {
         messages: [textMessage('user-a', 'user', 'A')],
-        modelState: null,
+        modelContext: testModelContext(),
       },
     });
     await loadA;
@@ -575,7 +715,7 @@ describe('DefaultAgentController', () => {
     expect(controller.getState().messages).toEqual([
       textMessage('user-b', 'user', 'B'),
     ]);
-    expect(controller.getState().modelState).toEqual(MODEL_STATE);
+    expect(controller.getState().modelContext.modelState).toEqual(MODEL_STATE);
   });
 
   it('保存阶段切换会话时，迟到保存不能提交旧 context', async () => {
@@ -589,7 +729,7 @@ describe('DefaultAgentController', () => {
     const execution = await waitForExecution(engine);
     execution.finish({
       messages: [textMessage('assistant-a', 'assistant', 'A 的回答')],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: COMPLETED_OUTCOME,
     });
     await vi.waitFor(() => {
@@ -617,7 +757,7 @@ describe('DefaultAgentController', () => {
     const execution = await waitForExecution(engine);
     execution.finish({
       messages: [textMessage('assistant-limited', 'assistant', '已封闭的截断内容')],
-      modelState: MODEL_STATE,
+      modelContext: testModelContext(MODEL_STATE),
       outcome: { type: 'max-tokens' },
     });
     await vi.waitFor(() => {
@@ -673,7 +813,7 @@ describe('DefaultAgentController', () => {
     });
     execution.finish({
       messages: [],
-      modelState: null,
+      modelContext: testModelContext(),
       outcome: COMPLETED_OUTCOME,
     });
     await sending;

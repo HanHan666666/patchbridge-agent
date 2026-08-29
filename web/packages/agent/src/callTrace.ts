@@ -2,7 +2,7 @@
  * 调用轨迹（Call Trace）：浏览器端执行过程的可观测数据采集与本地保留。
  *
  * <p>为什么需要独立于会话存储：会话持久化只保存“模型上下文所需的稳定内容”
- * （消息与 ModelState），耗时、token 用量、确认交互等执行元数据不属于模型
+ * （完整消息与 ModelContext），耗时、token 用量、确认交互等执行元数据不属于模型
  * 上下文，按架构不写入服务端会话存储。CallTraceStore 以只读生命周期 Hook 的
  * 身份观察每次 Execution，把过程事实整理成按 traceId 组织的轨迹，并按会话
  * 保留在 localStorage——不新增后端表与端点，代价是轨迹只属于当前浏览器。
@@ -356,16 +356,30 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
 
   /**
    * 消费本轮新增的稳定消息，补全 Assistant 正文与 Tool 结果。
-   * 重复通知同一批消息是幂等的：字段只在记录上原位重写相同值。
+   *
+   * <p>Runtime 发布的是本轮累计稳定消息；连续两次 tool-use 时，后一条模型完成事件
+   * 会先于它的 Assistant 内容补录。这里必须先在候选轨迹中应用整批消息，再统一校验
+   * 和提交，不能让重复补录的旧消息观察到这段合法中间态。任何消息非法时，实时轨迹
+   * 保持调用前状态；重复通知同一批消息仍是幂等的。
    */
   noteCommittedMessages(added: readonly AgentMessage[]): void {
+    if (this.disposed) {
+      return;
+    }
+    const drafts = new Map<string, ExecutionTrace>();
     for (const message of added) {
       if (message.role === 'assistant') {
-        this.fillAssistantContent(message);
+        this.fillAssistantContent(message, drafts);
       } else if (message.role === 'tool') {
-        this.fillToolResults(message);
+        this.fillToolResults(message, drafts);
       }
     }
+    for (const trace of drafts.values()) {
+      if (!hasValidExecutionRecordRelations(trace.records, false)) {
+        throw new Error(`轨迹 ${trace.traceId} 的稳定消息批次回填破坏了 Tool 引用关系`);
+      }
+    }
+    this.commitTraceDrafts(drafts);
   }
 
   // ---------- 会话生命周期 ----------
@@ -659,8 +673,11 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
     return Object.freeze({ ...trace, records: Object.freeze(records) });
   }
 
-  /** 按消息 ID 关联 Assistant 消息，回填正文、思考与 Tool Call 清单。 */
-  private fillAssistantContent(message: AgentMessage): void {
+  /** 按消息 ID 把 Assistant 内容写入当前批次候选轨迹。 */
+  private fillAssistantContent(
+    message: AgentMessage,
+    drafts: Map<string, ExecutionTrace>,
+  ): void {
     let text = '';
     let reasoning = '';
     const toolCallIds: string[] = [];
@@ -680,7 +697,8 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
       }
       uniqueToolCallIds.add(callId);
     }
-    this.updateTraceByRecord(
+    this.updateTraceDraftByRecord(
+      drafts,
       record => record.type === 'model-call' && record.responseMessageId === message.id,
       (record, trace) => {
         const duplicatedAcrossModels = trace.records.some(candidate =>
@@ -696,18 +714,16 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
           reasoning: truncateText(reasoning),
           toolCallIds: Object.freeze(toolCallIds),
         } satisfies ModelCallTraceRecord);
-        const nextRecords = trace.records.map(candidate =>
-          candidate === record ? nextRecord : candidate);
-        if (!hasValidExecutionRecordRelations(nextRecords, false)) {
-          throw new Error(`Assistant 消息 ${message.id} 的回填破坏了 Tool 引用关系`);
-        }
         return nextRecord;
       },
     );
   }
 
-  /** 按 callId 把稳定 Tool 结果文本回填到对应调用记录。 */
-  private fillToolResults(message: AgentMessage): void {
+  /** 按 callId 把稳定 Tool 结果写入当前批次候选轨迹。 */
+  private fillToolResults(
+    message: AgentMessage,
+    drafts: Map<string, ExecutionTrace>,
+  ): void {
     for (const block of message.blocks) {
       if (block.type !== 'tool-result') {
         continue;
@@ -715,7 +731,8 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
       const content = block.content
         .map(item => item.type === 'text' ? item.text : '')
         .join('');
-      this.updateTraceByRecord(
+      this.updateTraceDraftByRecord(
+        drafts,
         record => record.type === 'tool-call' && record.callId === block.callId,
         record => ({
           ...(record as ToolCallTraceRecord),
@@ -752,24 +769,72 @@ export class CallTraceStore implements AgentHook, CallTraceSource {
     this.replaceTrace(trace, update(trace));
   }
 
-  /** 跨任意轨迹按谓词定位并更新一条记录（内容补全通道使用）。 */
-  private updateTraceByRecord(
+  /**
+   * 跨任意实时轨迹定位一条记录，并只更新当前稳定消息批次的候选版本。
+   *
+   * <p>候选轨迹按 traceId 复用，使同一批累计消息能看到此前消息的候选结果；在
+   * noteCommittedMessages 完成整批校验前，不得调用 replaceTrace 污染实时索引。
+   */
+  private updateTraceDraftByRecord(
+    drafts: Map<string, ExecutionTrace>,
     matches: (record: CallTraceRecord) => boolean,
     update: (record: CallTraceRecord, trace: ExecutionTrace) => CallTraceRecord,
   ): void {
-    if (this.disposed) {
-      return;
-    }
-    for (const trace of this.tracesById.values()) {
+    for (const liveTrace of this.tracesById.values()) {
+      const trace = drafts.get(liveTrace.traceId) ?? liveTrace;
       if (!trace.records.some(matches)) {
         continue;
       }
       const records = trace.records.map(record =>
         matches(record) ? Object.freeze(update(record, trace)) : record);
-      this.replaceTrace(trace, Object.freeze({ ...trace, records: Object.freeze(records) }));
+      drafts.set(
+        trace.traceId,
+        Object.freeze({ ...trace, records: Object.freeze(records) }),
+      );
       return;
     }
     // 与 note* 通道的约定一致：轨迹不存在（自定义 Engine）时静默忽略。
+  }
+
+  /**
+   * 一次提交已经全部校验通过的候选轨迹，并只向当前会话观察者发布一次。
+   *
+   * <p>提交前先验证每条候选轨迹仍位于某个会话桶；若内部索引已经分裂则直接失败，
+   * 保证 tracesById 与 buckets 不会只更新一侧。
+   */
+  private commitTraceDrafts(drafts: ReadonlyMap<string, ExecutionTrace>): void {
+    if (drafts.size === 0) {
+      return;
+    }
+    const nextBuckets = new Map<string | null, readonly ExecutionTrace[]>();
+    const locatedTraceIds = new Set<string>();
+    for (const [conversationId, bucket] of this.buckets) {
+      let changed = false;
+      const nextBucket = bucket.map(trace => {
+        const draft = drafts.get(trace.traceId);
+        if (draft == null) {
+          return trace;
+        }
+        changed = true;
+        locatedTraceIds.add(trace.traceId);
+        return draft;
+      });
+      if (changed) {
+        nextBuckets.set(conversationId, Object.freeze(nextBucket));
+      }
+    }
+    if (locatedTraceIds.size !== drafts.size) {
+      throw new Error('稳定消息批次候选轨迹与会话桶索引不一致');
+    }
+    for (const [traceId, draft] of drafts) {
+      this.tracesById.set(traceId, draft);
+    }
+    for (const [conversationId, bucket] of nextBuckets) {
+      this.buckets.set(conversationId, bucket);
+    }
+    if (nextBuckets.has(this.activeConversationId)) {
+      this.publish();
+    }
   }
 
   /** 在轨迹末尾追加一条记录。 */

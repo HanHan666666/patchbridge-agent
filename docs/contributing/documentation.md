@@ -54,6 +54,8 @@
 | --- | --- |
 | `Agent Runtime` | Agent 执行运行时 |
 | `ModelState` | 模型续接状态 |
+| `ModelContext` | 与完整聊天历史分离的模型工作上下文 |
+| `ContextManager` | Browser 上下文压缩与模型输入投影的统一入口 |
 | `ContentBlock` | 结构化内容块 |
 | `ToolRegistrySnapshot` | Tool 注册表执行快照 |
 | `ModelGateway` | Java 单次模型调用门面 |

@@ -30,6 +30,11 @@ import type {
   ModelState,
   ToolDefinition,
 } from '../src/types';
+import {
+  TEST_MODEL_USAGE,
+  testContextManager,
+  testModelContext,
+} from './testContext';
 
 /** 脚本化模型调用记录，用于验证 Runtime 传入的稳定上下文。 */
 interface ModelCall {
@@ -140,7 +145,7 @@ function baseInput(
         role: 'user',
         blocks: [{ type: 'text', text: '查询设备' }],
       }],
-      modelState,
+      modelContext: testModelContext(modelState),
     },
     toolSnapshot,
     conversationId: 'conversation-1',
@@ -153,6 +158,7 @@ function createRuntime(model: Model, maxModelCalls = 4): DefaultAgentRuntime {
   const counters = { message: 0, interrupt: 0 };
   return new DefaultAgentRuntime(model, {
     limits: testLimits({ maxModelCalls }),
+    contextManager: testContextManager(),
     createId: kind => `${kind}-${++counters[kind]}`,
   });
 }
@@ -175,7 +181,7 @@ function testLimits(
 function textResponse(
   text: string,
   modelState: ModelState | null = null,
-  usage: ModelUsage | null = null,
+  usage: ModelUsage | null = TEST_MODEL_USAGE,
 ): ModelStreamEvent[] {
   return [
     { type: 'block-start', index: 0, block: { type: 'text' } },
@@ -210,7 +216,7 @@ function toolResponse(
       delta: { type: 'tool-call', argumentsDelta: '":"DEV-1"}' },
     },
     { type: 'block-stop', index: 1 },
-    { type: 'message-stop', stopReason: 'tool-use', usage: null, modelState },
+    { type: 'message-stop', stopReason: 'tool-use', usage: TEST_MODEL_USAGE, modelState },
   ];
 }
 
@@ -235,7 +241,7 @@ describe('DefaultAgentRuntime', () => {
       { type: 'block-start', index: 0, block: { type: 'reasoning' } },
       { type: 'block-delta', index: 0, delta: { type: 'reasoning', text: '推理摘要' } },
       { type: 'block-stop', index: 0 },
-      { type: 'message-stop', stopReason: 'end-turn', usage: null, modelState: state },
+      { type: 'message-stop', stopReason: 'end-turn', usage: TEST_MODEL_USAGE, modelState: state },
     ]];
     const { snapshot } = createToolSnapshot([]);
     const events: AgentExecutionEvent[] = [];
@@ -252,7 +258,16 @@ describe('DefaultAgentRuntime', () => {
           { type: 'text', text: '最终答案' },
         ],
       }],
-      modelState: state,
+      modelContext: {
+        checkpoint: null,
+        firstRetainedMessageId: null,
+        modelState: state,
+        usage: {
+          totalTokens: TEST_MODEL_USAGE.totalTokens,
+          source: 'provider',
+          measuredThroughMessageId: 'message-1',
+        },
+      },
       outcome: { type: 'completed', stopReason: 'end-turn' },
     });
     expect(events.filter(event => event.type === 'reasoning-delta')).toEqual([
@@ -341,7 +356,7 @@ describe('DefaultAgentRuntime', () => {
     expect(model.calls[1]?.request.messages.at(-1)).toEqual(result.messages[1]);
     expect(Object.isFrozen(model.calls[0]?.request.messages[0])).toBe(true);
     expect(Object.isFrozen(result.messages[0]?.blocks)).toBe(true);
-    expect(result.modelState).toEqual(finalState);
+    expect(result.modelContext.modelState).toEqual(finalState);
   });
 
   it('Tool 确认以 interrupt 暂停，并由同一 Execution.respond 精确恢复', async () => {
@@ -429,7 +444,7 @@ describe('DefaultAgentRuntime', () => {
         throw nativeAbortError();
       }
       yield { type: 'block-stop', index: 0 };
-      yield { type: 'message-stop', stopReason: 'end-turn', usage: null, modelState: null };
+      yield { type: 'message-stop', stopReason: 'end-turn', usage: TEST_MODEL_USAGE, modelState: null };
     };
     const { snapshot } = createToolSnapshot([]);
     const events: AgentExecutionEvent[] = [];
@@ -437,6 +452,7 @@ describe('DefaultAgentRuntime', () => {
     let messageId = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits(),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => lifecycleEvents.push(event) }],
       createId: kind => kind === 'message' ? `message-${++messageId}` : 'interrupt-1',
     });
@@ -450,7 +466,7 @@ describe('DefaultAgentRuntime', () => {
 
     await expect(execution.result).resolves.toEqual({
       messages: [],
-      modelState: null,
+      modelContext: testModelContext(),
       outcome: { type: 'cancelled' },
     });
     expect(events.some(event => event.type === 'messages')).toBe(false);
@@ -502,6 +518,7 @@ describe('DefaultAgentRuntime', () => {
     };
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits({ maxModelCalls: 1 }),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => lifecycleEvents.push(event) }],
       createId: () => 'message-1',
       now: () => {
@@ -556,7 +573,7 @@ describe('DefaultAgentRuntime', () => {
         delta: { type: 'tool-call', argumentsDelta: '[]' },
       },
       { type: 'block-stop', index: 0 },
-      { type: 'message-stop', stopReason: 'tool-use', usage: null, modelState: null },
+      { type: 'message-stop', stopReason: 'tool-use', usage: TEST_MODEL_USAGE, modelState: null },
     ]];
     const { snapshot } = createToolSnapshot([toolNamed('local.device_get')]);
 
@@ -604,6 +621,7 @@ describe('DefaultAgentRuntime', () => {
     let sampleIndex = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits({ maxModelCalls: 1, maxDurationMs: 100_000 }),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => events.push(event) }],
       createId: () => 'message-1',
       now: () => {
@@ -634,6 +652,7 @@ describe('DefaultAgentRuntime', () => {
     let sampleIndex = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits({ maxModelCalls: 1 }),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => events.push(event) }],
       createId: () => 'message-1',
       now: () => samples[sampleIndex++] ?? Number.NaN,
@@ -694,6 +713,7 @@ describe('DefaultAgentRuntime', () => {
     let messageId = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits({ maxModelCalls: 2 }),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => events.push(event) }],
       createId: kind => kind === 'message' ? `message-${++messageId}` : 'interrupt-1',
       now: () => {
@@ -735,6 +755,7 @@ describe('DefaultAgentRuntime', () => {
     let messageIds = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits(),
+      contextManager: testContextManager(),
       hooks: [hook],
       createId: kind => kind === 'message'
         ? `message-${++messageIds}`
@@ -779,6 +800,7 @@ describe('DefaultAgentRuntime', () => {
     let messageId = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits(),
+      contextManager: testContextManager(),
       hooks: [{
         onEvent: event => {
           if (event.type === 'tool-call-started') {
@@ -803,6 +825,7 @@ describe('DefaultAgentRuntime', () => {
     let messageId = 0;
     const runtime = new DefaultAgentRuntime(model, {
       limits: testLimits({ maxModelCalls: 1 }),
+      contextManager: testContextManager(),
       hooks: [{ onEvent: event => hookEvents.push(event) }],
       createId: kind => kind === 'message' ? `message-${++messageId}` : 'interrupt-1',
     });

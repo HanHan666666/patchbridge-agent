@@ -26,7 +26,7 @@
 | 409 | <code>MCP_CONFIG_READ_ONLY</code> | properties 模式写操作 |
 | 500 | <code>TOOL_FAILED</code> | Tool 执行异常 |
 | 502 | <code>MCP_FAILED</code> | MCP 协议或连接异常 |
-| 502 | <code>MODEL_FAILED</code> | 未进入 SSE 流的模型网关异常 |
+| 502 | <code>MODEL_FAILED</code> | 未进入 SSE 流的模型网关异常，或上下文摘要 / Provider 状态投影失败 |
 | 200 SSE | <code>MODEL_FAILED</code> | 流内 error 帧 |
 
 当前边界必须如实理解：
@@ -35,6 +35,9 @@
 - 405、415、406 发生在 Handler 选中之前，由路径限定的协议异常解析器处理：<code>base-path</code> 独占空间内返回上述统一信封（405 保留 <code>Allow</code>，415 保留 <code>Accept</code>），空间外完全交回宿主异常链，不影响宿主 Controller。
 - 已通过宿主身份认证但 userId 为空或纯空白时，按 <code>401 AUTH_REQUIRED</code> 处理；框架不裁剪或重建 userId。
 - Browser 本地还会产生 NETWORK_ERROR、ABORTED、INVALID_STATE 和 MODEL_PROTOCOL_ERROR。
+- 上下文压缩缺少正常 Provider usage、没有安全可压缩前缀或服务端配置/响应形状违约时，
+  Browser 使用 <code>INVALID_STATE</code>；摘要请求取消使用 <code>ABORTED</code>。失败不会提交检查点，
+  自动路径也不会继续发送可能溢出的原模型请求。
 - Browser Runtime 还会产生 <code>AGENT_MAX_MODEL_CALLS</code>、<code>AGENT_MAX_TOOL_CALLS</code>、<code>AGENT_EXECUTION_TIMEOUT</code>、<code>MODEL_OUTPUT_LIMIT_EXCEEDED</code> 和 <code>TOOL_RESULT_LIMIT_EXCEEDED</code>，五者都是不自动重试的明确终止。
 
 ---
@@ -51,5 +54,6 @@
 | `AGENT_EXECUTION_TIMEOUT` | 整体 Execution 超过 `maxDurationMs` |
 | `MODEL_OUTPUT_LIMIT_EXCEEDED` | 单次模型调用聚合字符超限 |
 | `TOOL_RESULT_LIMIT_EXCEEDED` | Tool 结果文本超限 |
+| `INVALID_STATE` | 缺少必需模型 usage、压缩边界或严格上下文配置/响应不成立 |
 
 上述错误均为 `retryable: false`。是否重新发起一次新 Execution 由用户或宿主决定，框架不自动重试。

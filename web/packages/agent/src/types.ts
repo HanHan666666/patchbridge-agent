@@ -24,6 +24,7 @@ export type AgentStatus =
   | 'loading-conversations'
   | 'loading-conversation'
   | 'loading-tools'
+  | 'compacting-context'
   | 'streaming'
   | 'waiting-confirmation'
   | 'calling-tool'
@@ -210,12 +211,82 @@ export interface ModelState {
   readonly data: JsonValue;
 }
 
+/** 上下文压缩来源；自动阈值与用户主动操作需要在审计和界面中明确区分。 */
+export type ContextCompactionTrigger = 'automatic' | 'manual';
+
+/** 最近一次上下文压缩形成的可持久化检查点。 */
+export interface ContextCompactionCheckpoint {
+  /** 检查点稳定标识，用于生成模型专用摘要消息 ID。 */
+  readonly id: string;
+  /** 当前模型生成的结构化上下文摘要；不进入可见聊天历史。 */
+  readonly summary: string;
+  /** 本次压缩由阈值还是用户动作触发。 */
+  readonly trigger: ContextCompactionTrigger;
+  /** ISO-8601 压缩完成时间。 */
+  readonly compactedAt: string;
+  /** 压缩前模型工作上下文的 token 数。 */
+  readonly tokensBefore: number;
+  /** 摘要与保留尾部组成的新工作上下文估算 token 数。 */
+  readonly estimatedTokensAfter: number;
+  /** 当前会话累计成功压缩次数。 */
+  readonly compactionCount: number;
+}
+
+/** 模型工作上下文最近一次 token 计量。 */
+export interface ModelContextUsage {
+  /** Provider 报告或压缩后保守估算的工作上下文 token 总数。 */
+  readonly totalTokens: number;
+  /** provider 是上游精确用量，estimated 只允许用于成功压缩后的过渡快照。 */
+  readonly source: 'provider' | 'estimated';
+  /** 该计量覆盖到的最后一条完整聊天消息；空会话时为 null。 */
+  readonly measuredThroughMessageId: string | null;
+}
+
+/**
+ * 与完整聊天历史分离的模型工作上下文。
+ *
+ * <p>Browser 只通过 ContextManager 更新该聚合；Provider 私有状态继续保持不透明。
+ * firstRetainedMessageId 引用 messages 中的边界，避免在持久化层复制近期消息。
+ */
+export interface ModelContext {
+  /** 最近一次成功压缩产生的检查点；尚未压缩时为 null。 */
+  readonly checkpoint: ContextCompactionCheckpoint | null;
+  /** 压缩后第一条保留的非 system 消息 ID；未压缩时为 null。 */
+  readonly firstRetainedMessageId: string | null;
+  /** 与当前模型工作上下文严格对应的 Provider 连续状态。 */
+  readonly modelState: ModelState | null;
+  /** 最近一次可用的工作上下文 token 计量；首次模型响应前为 null。 */
+  readonly usage: ModelContextUsage | null;
+}
+
+/** 服务端根据模型窗口配置派生的上下文压缩参数。 */
+export interface ContextCompactionConfiguration {
+  /** 当前模型明确配置的上下文窗口大小。 */
+  readonly contextWindowTokens: number;
+  /** 自动压缩阈值，固定为上下文窗口的 80%。 */
+  readonly automaticThresholdTokens: number;
+  /** 每次压缩后保留近期真实消息的 token 预算。 */
+  readonly keepRecentTokens: number;
+}
+
+/** View 可直接展示的上下文窗口状态；业务计算由 ContextManager 统一完成。 */
+export interface ContextWindowState {
+  /** 当前已计量或已估算的 token 数；尚未取得首次用量时为 null。 */
+  readonly currentTokens: number | null;
+  /** 当前数值来源；未知时为 null。 */
+  readonly source: ModelContextUsage['source'] | null;
+  /** 相对模型完整窗口的占用比例，限制在 0 到 1 之间。 */
+  readonly percentage: number | null;
+  /** 当前消息边界是否存在可以安全压缩的历史前缀。 */
+  readonly compactable: boolean;
+}
+
 /** 一次可恢复会话的完整 Agent 上下文。 */
 export interface ConversationContext {
-  /** 可展示、可持久化的稳定消息。 */
+  /** 始终完整保留、可展示且可持久化的稳定消息。 */
   readonly messages: readonly AgentMessage[];
-  /** 模型续接状态；普通无状态模型为 null。 */
-  readonly modelState: ModelState | null;
+  /** 可独立压缩的模型工作上下文。 */
+  readonly modelContext: ModelContext;
 }
 
 /**
@@ -310,8 +381,12 @@ export interface AgentState {
   readonly conversations: readonly Conversation[];
   /** 当前会话已经稳定提交的完整消息。 */
   readonly messages: readonly AgentMessage[];
-  /** 与展示消息分离的 Provider 续接状态；View 不应读取其 data。 */
-  readonly modelState: ModelState | null;
+  /** 与完整聊天历史分离、可独立压缩的模型工作上下文。 */
+  readonly modelContext: ModelContext;
+  /** 服务端返回的模型窗口和压缩预算配置；初始化完成前为 null。 */
+  readonly contextConfiguration: ContextCompactionConfiguration | null;
+  /** 根据当前消息、配置和计量集中派生的 View 状态。 */
+  readonly contextWindow: ContextWindowState;
   /** 当前尚未完成的 Assistant 展示增量。 */
   readonly streamingAssistant: StreamingAssistant | null;
   /** 正在等待宿主响应的 Tool 确认。 */

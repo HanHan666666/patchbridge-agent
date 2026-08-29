@@ -206,7 +206,7 @@
      * Hook 只观察稳定事实；Interceptor 包围调用并继续交给唯一 next，不改变业务结果。
     */
     demoAgent.runtimeOptions = {
-        limits: { maxModelCalls: 8 },
+        limits: { maxModelCalls: 30 },
         hooks: [{
             onEvent: event => {
                 runtimeMetrics.lifecycle = event.type;

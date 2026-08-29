@@ -7,9 +7,9 @@ import io.patchbridge.agent.core.conversation.ConversationContextValues;
 import io.patchbridge.agent.core.conversation.ConversationNotFoundException;
 import io.patchbridge.agent.core.conversation.ConversationRepository;
 import io.patchbridge.agent.core.conversation.ConversationSnapshot;
+import io.patchbridge.agent.core.conversation.ModelContext;
 import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.core.model.MessageRole;
-import io.patchbridge.agent.core.model.ModelState;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -32,14 +32,14 @@ import javax.sql.DataSource;
 /**
  * ConversationRepository 的 JDBC 默认实现。
  *
- * <p>ConversationContext 是一个乐观锁聚合：消息与 ModelState 在同一事务、同一 revision 下全量替换。详情读取使用 REPEATABLE_READ
+ * <p>ConversationContext 是一个乐观锁聚合：完整消息与 ModelContext 在同一事务、同一 revision 下全量替换。详情读取使用 REPEATABLE_READ
  * 快照，避免并发保存时返回旧 revision 搭配 新上下文。所有入口都在 SQL 层携带 ownerKey，不信任仅凭 conversationId 的访问。
  *
  * <p>消息行只保存稳定 AgentMessage 的 id、role 和 blocks_json。SQL 仅面向项目明确支持的 H2 与 MySQL。
  */
 public class JdbcConversationRepository implements ConversationRepository {
 
-    /** 元数据查询的显式列，避免列表读取大型或敏感的 model_state_json。 */
+    /** 元数据查询的显式列，避免列表读取模型工作上下文 CLOB。 */
     private static final String CONVERSATION_COLUMNS =
             "conversation_id, owner_key, title, revision, status, created_at, updated_at";
 
@@ -65,7 +65,7 @@ public class JdbcConversationRepository implements ConversationRepository {
     /** 保存和删除完整聚合时使用的事务边界。 */
     private final TransactionTemplate writeTransaction;
 
-    /** 保证 revision、消息和 ModelState 来自同一可重复读快照的事务边界。 */
+    /** 保证 revision、消息和 ModelContext 来自同一可重复读快照的事务边界。 */
     private final TransactionTemplate snapshotTransaction;
 
     /** 只负责稳定 JSON 值与数据库文本之间转换的序列化器。 */
@@ -94,20 +94,25 @@ public class JdbcConversationRepository implements ConversationRepository {
         this.objectMapper = objectMapper;
     }
 
-    /** 在指定 ownerKey 下创建空会话；空上下文由详情读取时构造。 */
+    /** 在指定 ownerKey 下创建带明确空 ModelContext 的空会话。 */
     @Override
     public Conversation create(String ownerKey, String title) {
         requireOwnerKey(ownerKey);
         String id = newId();
         Date now = new Date();
+        String emptyModelContextJson =
+                writeRequestJson(
+                        ConversationContextValues.toModelContextValue(ModelContext.empty()),
+                        "空 modelContext");
         jdbc.update(
                 "INSERT INTO agent_conversation "
                         + "(conversation_id, owner_key, title, revision, status, "
-                        + "model_state_json, created_at, updated_at) "
-                        + "VALUES (?, ?, ?, 0, 'ACTIVE', NULL, ?, ?)",
+                        + "model_context_json, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?, ?)",
                 id,
                 ownerKey,
                 title,
+                emptyModelContextJson,
                 new Timestamp(now.getTime()),
                 new Timestamp(now.getTime()));
         return findConversation(ownerKey, id);
@@ -186,13 +191,13 @@ public class JdbcConversationRepository implements ConversationRepository {
                 });
     }
 
-    /** 在同一事务快照内先读取元数据和 ModelState，再按顺序恢复消息。 */
+    /** 在同一事务快照内先读取元数据和 ModelContext，再按顺序恢复消息。 */
     private ConversationSnapshot doFindSnapshot(String ownerKey, String conversationId) {
         List<ConversationStateRow> conversations =
                 jdbc.query(
                         "SELECT "
                                 + CONVERSATION_COLUMNS
-                                + ", model_state_json FROM agent_conversation WHERE conversation_id"
+                                + ", model_context_json FROM agent_conversation WHERE conversation_id"
                                 + " = ? AND owner_key = ?",
                         new RowMapper<ConversationStateRow>() {
                             @Override
@@ -200,7 +205,7 @@ public class JdbcConversationRepository implements ConversationRepository {
                                     throws SQLException {
                                 return new ConversationStateRow(
                                         CONVERSATION_MAPPER.mapRow(rs, rowNum),
-                                        rs.getString("model_state_json"));
+                                        rs.getString("model_context_json"));
                             }
                         },
                         conversationId,
@@ -210,12 +215,12 @@ public class JdbcConversationRepository implements ConversationRepository {
         }
         ConversationStateRow row = conversations.get(0);
         List<AgentMessage> messages = loadMessages(ownerKey, conversationId);
-        ModelState modelState = decodeModelState(row.modelStateJson, conversationId);
+        ModelContext modelContext = decodeModelContext(row.modelContextJson, conversationId);
         return new ConversationSnapshot(
-                row.conversation, new ConversationContext(messages, modelState));
+                row.conversation, new ConversationContext(messages, modelContext));
     }
 
-    /** 乐观锁成功后在同一事务中替换 ModelState 与全部消息。 */
+    /** 乐观锁成功后在同一事务中替换 ModelContext 与全部消息。 */
     private Conversation doSave(
             String ownerKey,
             String conversationId,
@@ -226,11 +231,11 @@ public class JdbcConversationRepository implements ConversationRepository {
         int updated =
                 jdbc.update(
                         "UPDATE agent_conversation SET revision = revision + 1, updated_at = ?, "
-                                + "title = COALESCE(?, title), model_state_json = ? "
+                                + "title = COALESCE(?, title), model_context_json = ? "
                                 + "WHERE conversation_id = ? AND owner_key = ? AND revision = ?",
                         new Timestamp(now.getTime()),
                         title,
-                        context.modelStateJson,
+                        context.modelContextJson,
                         conversationId,
                         ownerKey,
                         expectedRevision);
@@ -262,7 +267,7 @@ public class JdbcConversationRepository implements ConversationRepository {
         return findConversation(ownerKey, conversationId);
     }
 
-    /** 使用显式元数据列查询单个会话，不触碰 ModelState。 */
+    /** 使用显式元数据列查询单个会话，不触碰 ModelContext。 */
     private Conversation findConversation(String ownerKey, String conversationId) {
         List<Conversation> rows =
                 jdbc.query(
@@ -314,26 +319,22 @@ public class JdbcConversationRepository implements ConversationRepository {
                                     ConversationContextValues.toBlocksValue(message.getBlocks()),
                                     "消息 " + message.getId() + " blocks")));
         }
-        String modelStateJson =
-                context.getModelState() == null
-                        ? null
-                        : writeRequestJson(
-                                ConversationContextValues.toModelStateValue(
-                                        context.getModelState()),
-                                "modelState");
-        return new EncodedContext(messages, modelStateJson);
+        String modelContextJson =
+                writeRequestJson(
+                        ConversationContextValues.toModelContextValue(
+                                context.getModelContext()),
+                        "modelContext");
+        return new EncodedContext(messages, modelContextJson);
     }
 
-    /** 把持久化 ModelState JSON 恢复为领域状态；损坏时明确失败。 */
-    private ModelState decodeModelState(String modelStateJson, String conversationId) {
-        if (modelStateJson == null) {
-            return null;
-        }
+    /** 把持久化 ModelContext JSON 恢复为领域状态；为空或损坏时明确失败。 */
+    private ModelContext decodeModelContext(String modelContextJson, String conversationId) {
         try {
-            return ConversationContextValues.fromModelStateValue(
-                    readStoredJson(modelStateJson, "会话 " + conversationId + " modelState"));
+            return ConversationContextValues.fromModelContextValue(
+                    readStoredJson(
+                            modelContextJson, "会话 " + conversationId + " modelContext"));
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("会话模型状态数据损坏: " + conversationId, e);
+            throw new IllegalStateException("会话模型工作上下文数据损坏: " + conversationId, e);
         }
     }
 
@@ -370,18 +371,18 @@ public class JdbcConversationRepository implements ConversationRepository {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-    /** 一致性读取时会话元数据与原始 ModelState JSON 的内部组合。 */
+    /** 一致性读取时会话元数据与原始 ModelContext JSON 的内部组合。 */
     private static final class ConversationStateRow {
         /** 会话元数据。 */
         private final Conversation conversation;
 
         /** 尚未解释的状态 JSON。 */
-        private final String modelStateJson;
+        private final String modelContextJson;
 
         /** 创建数据库内部行快照。 */
-        private ConversationStateRow(Conversation conversation, String modelStateJson) {
+        private ConversationStateRow(Conversation conversation, String modelContextJson) {
             this.conversation = conversation;
-            this.modelStateJson = modelStateJson;
+            this.modelContextJson = modelContextJson;
         }
     }
 
@@ -390,13 +391,13 @@ public class JdbcConversationRepository implements ConversationRepository {
         /** 按 sequence 排序的消息行。 */
         private final List<EncodedMessage> messages;
 
-        /** 可空的完整 ModelState JSON。 */
-        private final String modelStateJson;
+        /** 不可空的完整 ModelContext JSON。 */
+        private final String modelContextJson;
 
         /** 创建不可变 JDBC 参数快照。 */
-        private EncodedContext(List<EncodedMessage> messages, String modelStateJson) {
+        private EncodedContext(List<EncodedMessage> messages, String modelContextJson) {
             this.messages = Collections.unmodifiableList(new ArrayList<EncodedMessage>(messages));
-            this.modelStateJson = modelStateJson;
+            this.modelContextJson = modelContextJson;
         }
     }
 

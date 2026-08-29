@@ -13,6 +13,8 @@
 | <code>model.base-url</code> | 无 | 默认 Provider 必填；绝对 HTTP(S)，禁止 user-info、query、fragment |
 | <code>model.api-key</code> | 无 | 可空，取决于上游网关 |
 | <code>model.model</code> | 无 | 默认 Provider 必填、不可空白 |
+| <code>model.context-window-tokens</code> | 无 | 必填安全正整数；当前模型上下文窗口。自动压缩阈值固定派生为窗口的 80%，框架不按模型名猜测 |
+| <code>model.keep-recent-tokens</code> | <code>min(20000, floor(context-window-tokens × 20%))</code> | 可选安全正整数；压缩后保留近期真实消息的 token 预算，必须小于自动压缩阈值 |
 | <code>model.connect-timeout-ms</code> | <code>10000</code> | 大于等于 0；0 表示无限 |
 | <code>model.read-timeout-ms</code> | <code>300000</code> | 大于等于 0；0 表示无限 |
 | <code>conversations.list-limit</code> | <code>50</code> | 必须大于 0 |
@@ -27,6 +29,36 @@
 | <code>admin.enabled</code> | <code>false</code> | true 时必须提供 AdminAccessPolicy |
 
 <code>audit.payload-mode=full</code> 才组装请求/响应摘要，并仍经过 <code>AuditRedactor</code>。metadata-only 和 none 当前都不保存 payload 摘要，但仍保存调用元数据；完全关闭需使用 <code>audit.enabled=false</code>。
+
+### 上下文窗口与压缩预算
+
+`model.context-window-tokens` 是整个 Starter 的硬配置，包括使用自定义 Provider 的场景。
+服务端派生并通过 `GET {basePath}/model/config` 返回唯一参数：
+
+~~~text
+automaticThresholdTokens = floor(contextWindowTokens × 0.80)
+keepRecentTokens          = min(20_000, floor(contextWindowTokens × 0.20))
+~~~
+
+自动阈值不开放配置，避免不同 Browser 使用不同触发点。128,000 token 窗口对应 102,400
+自动阈值和默认 20,000 近期预算；32,000 token 窗口对应 25,600 阈值和 6,400 近期预算。
+如果显式设置 `model.keep-recent-tokens`，该值必须大于 0 且小于自动阈值，非法配置在
+`ContextCompactionSettings` 构造阶段失败。
+
+~~~yaml
+patchbridge-agent:
+  model:
+    base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL}
+    model: ${PATCHBRIDGE_AGENT_MODEL}
+    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
+    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
+    # 只有明确需要改变默认近期预算时才配置
+    keep-recent-tokens: 16000
+~~~
+
+摘要固定使用当前模型。缺失正常响应 usage、摘要失败或 Provider 状态投影失败均显式失败，
+没有字符估算替代、重试、换模型或清空状态路径。详细使用方式见
+[《使用上下文压缩》](../guides/context-compaction.md)。
 
 ### MCP Server 子配置
 

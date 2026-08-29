@@ -4,7 +4,10 @@ import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.model.ModelCall;
 import io.patchbridge.agent.core.model.ModelProvider;
 import io.patchbridge.agent.core.model.ModelRequest;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.model.openai.OpenAiChatProtocol;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -20,6 +23,7 @@ import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
 
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -28,7 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>该实现没有 Spring Bean 注解与自动配置，也不依赖 MVC Starter。宿主显式传入 已按自身网络策略配置的 WebClient，并将本类注册为
  * ModelProvider，才能启用该适配器。 Reactor 类型不会穿透 Core SPI，取消操作也只通过 ModelCall 暴露。
  */
-public final class WebFluxOpenAiCompatibleModelProvider implements ModelProvider {
+public final class WebFluxOpenAiCompatibleModelProvider
+        implements ModelProvider, ModelStateProjector {
 
     /** Spring 解析 SSE data 时需要保留的泛型类型。 */
     private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE =
@@ -89,6 +94,12 @@ public final class WebFluxOpenAiCompatibleModelProvider implements ModelProvider
         ReactorModelCall call = new ReactorModelCall(listener, decoder);
         call.subscribe(dataEvents);
         return call;
+    }
+
+    /** 由共享 OpenAI Chat 协议内核严格投影 Provider 私有状态。 */
+    @Override
+    public ModelState project(ModelState state, List<AgentMessage> retainedMessages) {
+        return protocol.projectState(state, retainedMessages);
     }
 
     /** 构造 HTTP 请求，并按状态码选择 SSE 解析或错误正文处理。 */

@@ -35,15 +35,15 @@ public final class ConversationContextValues {
     /**
      * 把稳定 JSON 对象解析为会话上下文。
      *
-     * @param value 包含 messages 与显式 modelState 的 JSON 对象
+     * @param value 包含 messages 与显式 modelContext 的 JSON 对象
      * @return 已校验的不可变领域上下文
      */
     public static ConversationContext fromValue(Object value) {
         Map<String, Object> context = requireObject(value, "context");
-        requireFields(context, "context", "messages", "modelState");
+        requireFields(context, "context", "messages", "modelContext");
         List<AgentMessage> messages = fromMessagesValue(context.get("messages"));
-        ModelState modelState = fromModelStateValue(context.get("modelState"));
-        return new ConversationContext(messages, modelState);
+        ModelContext modelContext = fromModelContextValue(context.get("modelContext"));
+        return new ConversationContext(messages, modelContext);
     }
 
     /** 把会话上下文转换为可交给任意 JSON Adapter 的稳定值对象。 */
@@ -53,7 +53,122 @@ public final class ConversationContextValues {
         }
         Map<String, Object> value = new LinkedHashMap<String, Object>();
         value.put("messages", toMessagesValue(context.getMessages()));
+        value.put("modelContext", toModelContextValue(context.getModelContext()));
+        return value;
+    }
+
+    /** 把 JSON ModelContext 解析为不可变工作上下文。 */
+    public static ModelContext fromModelContextValue(Object value) {
+        Map<String, Object> context = requireObject(value, "context.modelContext");
+        requireFields(
+                context,
+                "context.modelContext",
+                "checkpoint",
+                "firstRetainedMessageId",
+                "modelState",
+                "usage");
+        ContextCompactionCheckpoint checkpoint =
+                fromCheckpointValue(context.get("checkpoint"));
+        String firstRetainedMessageId =
+                requireNullableText(
+                        context.get("firstRetainedMessageId"),
+                        "context.modelContext.firstRetainedMessageId");
+        ModelState modelState = fromModelStateValue(context.get("modelState"));
+        ModelContextUsage usage = fromModelContextUsageValue(context.get("usage"));
+        return new ModelContext(checkpoint, firstRetainedMessageId, modelState, usage);
+    }
+
+    /** 把模型工作上下文转换为稳定 JSON 值。 */
+    public static Map<String, Object> toModelContextValue(ModelContext context) {
+        if (context == null) {
+            throw new IllegalArgumentException("modelContext 不可为空");
+        }
+        Map<String, Object> value = new LinkedHashMap<String, Object>();
+        value.put("checkpoint", toCheckpointValue(context.getCheckpoint()));
+        value.put("firstRetainedMessageId", context.getFirstRetainedMessageId());
         value.put("modelState", toModelStateValue(context.getModelState()));
+        value.put("usage", toModelContextUsageValue(context.getUsage()));
+        return value;
+    }
+
+    /** 解析可空的上下文压缩检查点。 */
+    private static ContextCompactionCheckpoint fromCheckpointValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        Map<String, Object> checkpoint =
+                requireObject(value, "context.modelContext.checkpoint");
+        requireFields(
+                checkpoint,
+                "context.modelContext.checkpoint",
+                "id",
+                "summary",
+                "trigger",
+                "compactedAt",
+                "tokensBefore",
+                "estimatedTokensAfter",
+                "compactionCount");
+        return new ContextCompactionCheckpoint(
+                requireText(checkpoint.get("id"), "checkpoint.id"),
+                requireText(checkpoint.get("summary"), "checkpoint.summary"),
+                ContextCompactionTrigger.fromWireValue(
+                        requireText(checkpoint.get("trigger"), "checkpoint.trigger")),
+                requireText(checkpoint.get("compactedAt"), "checkpoint.compactedAt"),
+                requireNonNegativeLong(checkpoint.get("tokensBefore"), "checkpoint.tokensBefore"),
+                requireNonNegativeLong(
+                        checkpoint.get("estimatedTokensAfter"),
+                        "checkpoint.estimatedTokensAfter"),
+                requirePositiveInt(
+                        checkpoint.get("compactionCount"), "checkpoint.compactionCount"));
+    }
+
+    /** 把可空检查点转换为稳定 JSON 值。 */
+    private static Map<String, Object> toCheckpointValue(
+            ContextCompactionCheckpoint checkpoint) {
+        if (checkpoint == null) {
+            return null;
+        }
+        Map<String, Object> value = new LinkedHashMap<String, Object>();
+        value.put("id", checkpoint.getId());
+        value.put("summary", checkpoint.getSummary());
+        value.put("trigger", checkpoint.getTrigger().getWireValue());
+        value.put("compactedAt", checkpoint.getCompactedAt());
+        value.put("tokensBefore", checkpoint.getTokensBefore());
+        value.put("estimatedTokensAfter", checkpoint.getEstimatedTokensAfter());
+        value.put("compactionCount", checkpoint.getCompactionCount());
+        return value;
+    }
+
+    /** 解析可空的模型工作上下文用量。 */
+    private static ModelContextUsage fromModelContextUsageValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        Map<String, Object> usage = requireObject(value, "context.modelContext.usage");
+        requireFields(
+                usage,
+                "context.modelContext.usage",
+                "totalTokens",
+                "source",
+                "measuredThroughMessageId");
+        return new ModelContextUsage(
+                requireNonNegativeLong(usage.get("totalTokens"), "usage.totalTokens"),
+                ModelContextUsage.Source.fromWireValue(
+                        requireText(usage.get("source"), "usage.source")),
+                requireNullableText(
+                        usage.get("measuredThroughMessageId"),
+                        "usage.measuredThroughMessageId"));
+    }
+
+    /** 把可空模型上下文用量转换为稳定 JSON 值。 */
+    private static Map<String, Object> toModelContextUsageValue(ModelContextUsage usage) {
+        if (usage == null) {
+            return null;
+        }
+        Map<String, Object> value = new LinkedHashMap<String, Object>();
+        value.put("totalTokens", usage.getTotalTokens());
+        value.put("source", usage.getSource().getWireValue());
+        value.put("measuredThroughMessageId", usage.getMeasuredThroughMessageId());
         return value;
     }
 
@@ -106,10 +221,11 @@ public final class ConversationContextValues {
         if (value == null) {
             return null;
         }
-        Map<String, Object> state = requireObject(value, "context.modelState");
-        requireFields(state, "context.modelState", "format", "data");
+        Map<String, Object> state = requireObject(value, "context.modelContext.modelState");
+        requireFields(state, "context.modelContext.modelState", "format", "data");
         return new ModelState(
-                requireText(state.get("format"), "context.modelState.format"), state.get("data"));
+                requireText(state.get("format"), "context.modelContext.modelState.format"),
+                state.get("data"));
     }
 
     /** 把领域 ModelState 转换为稳定 JSON 值；无状态时返回 null。 */
@@ -286,6 +402,35 @@ public final class ConversationContextValues {
             throw new IllegalArgumentException(path + " 不可为空");
         }
         return text;
+    }
+
+    /** 校验可空字符串；非空时不允许只有空白。 */
+    private static String requireNullableText(Object value, String path) {
+        return value == null ? null : requireText(value, path);
+    }
+
+    /** token 等计数只接受 JSON 整数语义和非负范围。 */
+    private static long requireNonNegativeLong(Object value, String path) {
+        if (!(value instanceof Byte
+                || value instanceof Short
+                || value instanceof Integer
+                || value instanceof Long)) {
+            throw new IllegalArgumentException(path + " 必须是整数");
+        }
+        long parsed = ((Number) value).longValue();
+        if (parsed < 0) {
+            throw new IllegalArgumentException(path + " 不可为负数");
+        }
+        return parsed;
+    }
+
+    /** 累计次数只接受 Java int 范围内的正整数。 */
+    private static int requirePositiveInt(Object value, String path) {
+        long parsed = requireNonNegativeLong(value, path);
+        if (parsed <= 0 || parsed > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(path + " 必须是 int 范围内的正整数");
+        }
+        return (int) parsed;
     }
 
     /** 校验 JSON 值是对象且所有键都是字符串。 */

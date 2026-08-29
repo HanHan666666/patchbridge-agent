@@ -151,6 +151,10 @@ patchbridge-agent::part(max-tokens-notice) {
 }
 ```
 
+上下文窗口入口提供 `context-panel`、`context-badge`、`context-details` 和
+`context-compact-button` 四个稳定 Part。它们只负责展示 Controller 已派生的 token 占比、
+检查点和手动意图，不在 Widget 内复制压缩阈值或切分规则。
+
 ## 不使用参考主题
 
 设置 `theme="none"` 后，Widget 不再注入默认颜色、字体、间距和圆角令牌，只保留布局、滚动、交互状态以及键盘焦点等基础行为。宿主可以通过同名设计令牌从头定义主题，也可以直接用 `::part` 设置主要语义节点。
