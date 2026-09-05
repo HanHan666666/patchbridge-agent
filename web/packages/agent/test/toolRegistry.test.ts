@@ -4,9 +4,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  BackendToolProvider,
   DefaultToolRegistry,
   ToolAlreadyRegisteredError,
 } from '../src/toolRegistry';
+import { HttpToolClient } from '../src/clients/toolClient';
+import type { ToolClient, ToolCallContext } from '../src/clients/toolClient';
+import type { HttpTransport } from '../src/clients/http';
 import type {
   BrowserToolProvider,
   ExecutableTool,
@@ -362,5 +366,84 @@ describe('DefaultToolRegistry', () => {
     await mounted.refresh();
     mounted.dispose();
     expect(registry.snapshot().tools).toEqual([]);
+  });
+
+  it('VA-01：BackendToolProvider 把发现时的版本引用贯穿到调用请求', async () => {
+    const calls: Array<{
+      name: string;
+      version: string | null;
+      context: ToolCallContext;
+    }> = [];
+    const definition = {
+      name: 'mcp.srv.action',
+      title: 'action',
+      description: '远端动作',
+      inputSchema: { type: 'object' } as const,
+      annotations: null,
+      source: 'MCP' as ToolSource,
+      permissions: [] as readonly string[],
+      version: 'route-v1',
+    };
+    const client: ToolClient = {
+      list: async () => [definition],
+      call: async (name, definitionVersion, _arguments, context) => {
+        calls.push({ name, version: definitionVersion, context });
+        return {
+          toolCallId: context.toolCallId,
+          content: 'ok',
+          isError: false,
+        };
+      },
+    };
+    const registry = new DefaultToolRegistry([new BackendToolProvider(client)]);
+    const firstSnapshot = await registry.refresh();
+    const loadedVersion = firstSnapshot.tools[0]?.version;
+    expect(loadedVersion).toBe('route-v1');
+
+    const invocation = firstSnapshot.invoke('mcp.srv.action', {}, {
+      traceId: 'trace-1',
+      conversationId: null,
+      toolCallId: 'call-1',
+    });
+    await expect(invocation).resolves.toMatchObject({ content: 'ok' });
+    expect(calls[0]).toMatchObject({ name: 'mcp.srv.action', version: 'route-v1' });
+
+    // 快照闭包绑定的是发现时刻的版本：即使 Registry 随后刷新出新版本，
+    // 已开始的调用仍携带旧版本，由服务端判定一致性而不是本地改写。
+    definition.version = 'route-v2';
+    const secondSnapshot = await registry.refresh();
+    expect(secondSnapshot.tools[0]?.version).toBe('route-v2');
+    await expect(firstSnapshot.invoke('mcp.srv.action', {}, {
+      traceId: 'trace-1',
+      conversationId: null,
+      toolCallId: 'call-2',
+    })).resolves.toMatchObject({ content: 'ok' });
+    expect(calls[1]?.version).toBe('route-v1');
+  });
+
+  it('VA-01：HttpToolClient 调用请求体携带版本引用字段', async () => {
+    const bodies: unknown[] = [];
+    const transport: HttpTransport = {
+      request: async (_url, init) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({
+          toolCallId: 'call-1',
+          content: 'ok',
+          isError: false,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    };
+    const client = new HttpToolClient('/ai', transport);
+    await client.call('mcp.srv.action', 'route-v1', {}, {
+      traceId: 'trace-1',
+      conversationId: null,
+      toolCallId: 'call-1',
+    });
+
+    expect(bodies[0]).toMatchObject({
+      name: 'mcp.srv.action',
+      version: 'route-v1',
+      toolCallId: 'call-1',
+    });
   });
 });

@@ -26,6 +26,10 @@ import java.util.concurrent.CompletionStage;
  * 后者只用于核对任务是否已经完成，避免把边界时刻的“剩余工作”误写成当前状态。
  * 任何截断、缺失 usage、空摘要或状态不兼容都会使整体调用失败。保留消息状态只在
  * 摘要完整成功后投影，Browser 因而不会收到部分候选状态。
+ *
+ * <p>摘要请求本身遵守与普通请求相同的窗口预算：摘要输入（含淘汰前缀、保留尾部、
+ * 合并的旧摘要与固定指令）加输出预留超过窗口时，调用在发起前明确失败。
+ * 失败不重试、不更换模型、不删改任何真实历史，由用户调整输入后重新发起压缩。
  */
 public final class DefaultContextCompactionProvider implements ContextCompactionProvider {
 
@@ -33,18 +37,23 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
     private final ModelGateway modelGateway;
     /** 唯一有权解释当前 Provider 私有状态的投影器。 */
     private final ModelStateProjector stateProjector;
+    /** 窗口与输出预留的唯一派生来源。 */
+    private final ContextCompactionSettings settings;
 
     /** 创建不持有会话状态的默认压缩服务。 */
     public DefaultContextCompactionProvider(
-            ModelGateway modelGateway, ModelStateProjector stateProjector) {
-        if (modelGateway == null || stateProjector == null) {
-            throw new IllegalArgumentException("modelGateway / stateProjector 不可为空");
+            ModelGateway modelGateway, ModelStateProjector stateProjector,
+            ContextCompactionSettings settings) {
+        if (modelGateway == null || stateProjector == null || settings == null) {
+            throw new IllegalArgumentException(
+                    "modelGateway / stateProjector / settings 不可为空");
         }
         this.modelGateway = modelGateway;
         this.stateProjector = stateProjector;
+        this.settings = settings;
     }
 
-    /** 构造摘要模型请求并把最终结果映射成原子压缩结果。 */
+    /** 构造摘要模型请求，执行预算检查后把最终结果映射成原子压缩结果。 */
     @Override
     public ContextCompactionInvocation compact(
             ContextCompactionRequest request, AiRequestContext context) {
@@ -52,6 +61,19 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
             throw new IllegalArgumentException("request / context 不可为空");
         }
         List<AgentMessage> summaryMessages = buildSummaryMessages(request);
+        // 摘要请求与普通请求共用同一窗口预算：淘汰前缀加保留尾部可能远大于压缩后的
+        // 工作上下文，不能默认认为摘要请求天然更小；超限必须在调用模型前明确失败。
+        int estimatedInputTokens = ModelInputEstimator.estimateMessages(summaryMessages);
+        int inputBudget = settings.getContextWindowTokens() - settings.getReservedOutputTokens();
+        if (estimatedInputTokens > inputBudget) {
+            throw new ModelGatewayException(
+                    "上下文摘要请求超过模型窗口预算：估算输入 " + estimatedInputTokens
+                            + " tokens，可用预算 " + inputBudget
+                            + "（窗口 " + settings.getContextWindowTokens()
+                            + " − 输出预留 " + settings.getReservedOutputTokens()
+                            + "）。完整历史已保留，请缩小本次压缩范围后重试",
+                    false);
+        }
         ModelState summaryState =
                 stateProjector.project(request.getModelState(), summaryStateMessages(request));
         ModelRequest modelRequest =

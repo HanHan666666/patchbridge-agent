@@ -105,6 +105,7 @@ function requireConfiguration(value: unknown): ContextCompactionConfiguration {
     'contextWindowTokens',
     'automaticThresholdTokens',
     'keepRecentTokens',
+    'reservedOutputTokens',
   ], '模型配置');
   const contextWindowTokens = requirePositiveInteger(
     record.contextWindowTokens,
@@ -118,16 +119,28 @@ function requireConfiguration(value: unknown): ContextCompactionConfiguration {
     record.keepRecentTokens,
     'keepRecentTokens',
   );
+  const reservedOutputTokens = requirePositiveInteger(
+    record.reservedOutputTokens,
+    'reservedOutputTokens',
+  );
   if (automaticThresholdTokens >= contextWindowTokens) {
     throw invalidStateError('automaticThresholdTokens 必须小于 contextWindowTokens');
   }
   if (keepRecentTokens >= automaticThresholdTokens) {
     throw invalidStateError('keepRecentTokens 必须小于 automaticThresholdTokens');
   }
+  // 预算的跨字段关系与服务端 ContextCompactionSettings 保持同一判定：
+  // 阈值之上的余量必须容纳输出预留，否则自动压缩永远无法产出可用输入。
+  if (automaticThresholdTokens + reservedOutputTokens >= contextWindowTokens) {
+    throw invalidStateError(
+      'reservedOutputTokens 与 automaticThresholdTokens 之和必须小于 contextWindowTokens',
+    );
+  }
   return Object.freeze({
     contextWindowTokens,
     automaticThresholdTokens,
     keepRecentTokens,
+    reservedOutputTokens,
   });
 }
 

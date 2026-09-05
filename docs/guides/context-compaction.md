@@ -44,22 +44,39 @@ patchbridge-agent:
 ~~~text
 automaticThresholdTokens = floor(contextWindowTokens × 0.80)
 keepRecentTokens          = min(20_000, floor(contextWindowTokens × 0.20))
+reservedOutputTokens      = floor(contextWindowTokens × 0.10)
 ~~~
 
-例如 128,000 token 窗口在 102,400 token 自动触发，并默认保留近期 20,000 token；32,000
-token 窗口在 25,600 token 触发，并保留近期 6,400 token。
+例如 128,000 token 窗口在 102,400 token 自动触发，默认保留近期 20,000 token 并为输出预留
+12,800 token；32,000 token 窗口在 25,600 token 触发，并保留近期 6,400 token、预留 3,200 token。
 
-只有业务确实需要其他近期预算时才显式覆盖：
+只有业务确实需要其他预算时才显式覆盖：
 
 ~~~yaml
 patchbridge-agent:
   model:
     context-window-tokens: 128000
     keep-recent-tokens: 16000
+    reserved-output-tokens: 16384
 ~~~
 
-`keep-recent-tokens` 必须大于 0 且小于自动阈值。自动阈值不能配置；Browser 从
-`GET /ai/model/config` 读取同一份服务端派生值。
+`keep-recent-tokens` 必须大于 0 且小于自动阈值；`reserved-output-tokens` 必须大于 0 且与自动
+阈值之和小于窗口。自动阈值不能配置；Browser 从 `GET /ai/model/config` 读取同一份服务端
+派生值。
+
+### 最终窗口预算检查
+
+每次模型调用前，Browser 会对最终出站输入做一次预算检查：工作消息（含 system 指令与摘要
+检查点）、本轮 Tool 定义与输出预留之和不得超过“窗口 − 输出预留”。压缩成功不代表检查通过：
+
+- 压缩后的工作上下文仍装不下窗口（例如最新安全段过大、摘要过长）时，本次请求明确失败，
+  检查点不提交，完整历史保留；
+- 首次调用尚无 Provider usage 时按完整出站输入估算，超大输入同样明确失败；
+- 服务端摘要请求遵守同一预算，超限在调用模型前失败。
+
+失败统一表现为 `CONTEXT_WINDOW_EXCEEDED`：终止本次请求，不自动重复压缩、不静默删除
+历史、不更换模型，由用户缩短输入或开启新会话后重新发起。估算采用 UTF-8 字节上界口径，
+会保守高估普通英文文本；新增协议时应验证相应计量边界。
 
 ### 2. 使用默认 Widget
 

@@ -28,6 +28,7 @@ import type {
   AgentMessage,
   JsonObject,
   ModelState,
+  ToolCallResult,
   ToolDefinition,
 } from '../src/types';
 import {
@@ -837,5 +838,217 @@ describe('DefaultAgentRuntime', () => {
       errorCode: 'AGENT_MAX_MODEL_CALLS',
       errorMessage: '模型调用次数达到上限 1，已终止以防止无限循环',
     });
+  });
+
+  // ---------- VA-03：取消/失败终态的继续契约 ----------
+
+  /** 构造同批两个 Tool Call 的模型响应。 */
+  function twoToolResponse(first: string, second: string): ModelStreamEvent[] {
+    return [
+      {
+        type: 'block-start',
+        index: 0,
+        block: { type: 'tool-call', callId: 'call-1', name: first },
+      },
+      { type: 'block-delta', index: 0, delta: { type: 'tool-call', argumentsDelta: '{}' } },
+      { type: 'block-stop', index: 0 },
+      {
+        type: 'block-start',
+        index: 1,
+        block: { type: 'tool-call', callId: 'call-2', name: second },
+      },
+      { type: 'block-delta', index: 1, delta: { type: 'tool-call', argumentsDelta: '{}' } },
+      { type: 'block-stop', index: 1 },
+      { type: 'message-stop', stopReason: 'tool-use', usage: TEST_MODEL_USAGE, modelState: null },
+    ];
+  }
+
+  it('VA-03：确认前取消补写“未执行”记录，原 Tool 调用次数为零', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.restart', true)]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.restart'), textResponse('不应调用')];
+    const events: AgentExecutionEvent[] = [];
+
+    const execution = createRuntime(model).start(
+      baseInput(snapshot),
+      event => events.push(event),
+    );
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    execution.cancel();
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'cancelled' });
+    expect(invocations).toHaveLength(0);
+    // 稳定历史：assistant Tool Call 后紧跟明确的取消记录，严格配对
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        name: 'local.restart',
+        status: 'error',
+        content: [{ text: expect.stringContaining('未执行') }],
+      }],
+    });
+    // 终态前发布了一次包含记录的稳定消息事件
+    const committed = events.filter(event => event.type === 'messages');
+    expect(committed.at(-1)?.messages).toHaveLength(2);
+  });
+
+  it('VA-03：多 Tool 批次部分完成后取消，已知结果与未执行部分分别表达', async () => {
+    const { snapshot, invocations } = createToolSnapshot([
+      toolNamed('local.query', false),
+      toolNamed('local.restart', true),
+    ]);
+    const model = new ScriptedModel();
+    model.scripts = [
+      twoToolResponse('local.query', 'local.restart'),
+      textResponse('不应调用'),
+    ];
+    const events: AgentExecutionEvent[] = [];
+
+    const execution = createRuntime(model).start(
+      baseInput(snapshot),
+      event => events.push(event),
+    );
+    // call-1 直接执行并发布结果，call-2 等待确认时取消
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    execution.cancel();
+    const result = await execution.result;
+
+    expect(invocations).toHaveLength(1);
+    expect(result.messages).toHaveLength(3);
+    // call-1 的真实结果不被取消抹除
+    expect(result.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'success',
+        content: [{ text: '工具执行成功' }],
+      }],
+    });
+    // call-2 明确记为未执行
+    expect(result.messages[2]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-2',
+        status: 'error',
+        content: [{ text: expect.stringContaining('未执行') }],
+      }],
+    });
+  });
+
+  it('VA-03：调用已发出后取消表达“结果未知”，不假设成功或失败', async () => {
+    const snapshot: ToolRegistrySnapshot = {
+      revision: 7,
+      tools: [toolNamed('local.slow')],
+      invoke: () => new Promise<ToolCallResult>(() => undefined),
+    };
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.slow')];
+    const events: AgentExecutionEvent[] = [];
+
+    const execution = createRuntime(model).start(
+      baseInput(snapshot),
+      event => events.push(event),
+    );
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'tool-call')).toBe(true));
+    execution.cancel();
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'cancelled' });
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'error',
+        content: [{ text: expect.stringContaining('结果未知') }],
+      }],
+    });
+    expect(JSON.stringify(result.messages[1])).toContain('核实');
+  });
+
+  it('VA-03：失败终态同样补写记录，历史不留下未配对 Tool Call', async () => {
+    const adapterFailure = new Error('Tool Adapter 连接失败');
+    const snapshot: ToolRegistrySnapshot = {
+      revision: 7,
+      tools: [toolNamed('local.failure')],
+      invoke: () => Promise.reject(adapterFailure),
+    };
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.failure'), textResponse('不应调用')];
+    const events: AgentExecutionEvent[] = [];
+
+    await expect(createRuntime(model).start(
+      baseInput(snapshot),
+      event => events.push(event),
+    ).result).rejects.toBe(adapterFailure);
+
+    // 调用已发出但结果未知：失败路径发布一次包含记录的稳定消息
+    const committed = events.filter(event => event.type === 'messages');
+    expect(committed).toHaveLength(2);
+    expect(committed[1]?.messages).toHaveLength(2);
+    expect(committed[1]?.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'error',
+        content: [{ text: expect.stringContaining('结果未知') }],
+      }],
+    });
+  });
+
+  it('VA-03：下一轮输入携带终态记录后与历史 Tool Call 严格配对', async () => {
+    const { snapshot } = createToolSnapshot([toolNamed('local.restart', true)]);
+    const model = new ScriptedModel();
+    model.scripts = [
+      toolResponse('local.restart'),
+      textResponse('收到，继续'),
+    ];
+    const events: AgentExecutionEvent[] = [];
+    const runtime = createRuntime(model);
+
+    const first = runtime.start(baseInput(snapshot), event => events.push(event));
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    first.cancel();
+    await first.result;
+
+    // 以取消后的稳定历史作为下一轮输入：出站消息不允许未配对 Tool Call
+    const cancelledMessages = (await first.result).messages;
+    const secondInput: AgentRunInput = {
+      conversation: {
+        messages: [
+          ...baseInput(snapshot).conversation.messages,
+          ...cancelledMessages,
+        ],
+        modelContext: (await first.result).modelContext,
+      },
+      toolSnapshot: snapshot,
+      conversationId: 'conversation-1',
+      traceId: 'trace-2',
+    };
+    const second = runtime.start(secondInput, () => undefined);
+    const secondResult = await second.result;
+
+    const request = model.calls[1]?.request;
+    const callIds = request?.messages.flatMap(message =>
+      message.blocks.filter(block => block.type === 'tool-call')
+        .map(block => block.callId));
+    const resultIds = request?.messages.flatMap(message =>
+      message.blocks.filter(block => block.type === 'tool-result')
+        .map(block => block.callId));
+    expect(callIds).toEqual(['call-1']);
+    expect(resultIds).toEqual(['call-1']);
+    expect(secondResult.outcome).toEqual({ type: 'completed', stopReason: 'end-turn' });
   });
 });

@@ -148,6 +148,20 @@ interface PendingInterrupt {
   readonly resolve: (approved: boolean | null) => void;
 }
 
+/** 尚未收到真实结果的 Tool Call 终态记录所需的最小事实。 */
+interface OpenToolCall {
+  /** 模型生成的调用 ID。 */
+  readonly callId: string;
+  /** 完整 Tool 名。 */
+  readonly name: string;
+  /**
+   * 中止时该调用所处的真实状态：
+   * pending=未执行（含等待确认）；invoked=已发出、结果未知；
+   * result-rejected=已执行且结果已返回，但超过单结果上限无法回填。
+   */
+  state: 'pending' | 'invoked' | 'result-rejected';
+}
+
 /** 等待中的 Model、Tool 或确认被逻辑终态门抢先关闭时使用的内部哨兵。 */
 const EXECUTION_STOPPED = Symbol('execution-stopped');
 
@@ -258,6 +272,8 @@ class DefaultAgentExecution implements AgentExecution {
   private readonly stableMessages: AgentMessage[] = [];
   /** 与完整 working 消息严格对应的当前模型工作上下文。 */
   private stableModelContext: ModelContext;
+  /** 当前批次中尚未收到真实结果的 Tool Call；结果回填后移除。 */
+  private readonly openToolCalls = new Map<string, OpenToolCall>();
   /** 输入上下文与本次 Execution 已接受的全部 Tool Call ID。 */
   private readonly acceptedToolCallIds = new Set<string>();
   /** 本次 Execution 已通过整批预检的 Tool Call 数量。 */
@@ -387,8 +403,17 @@ class DefaultAgentExecution implements AgentExecution {
     pending.resolve(response.value);
   }
 
-  /** 幂等取消模型、Tool 和等待中的用户确认。 */
+  /**
+   * 幂等取消模型、Tool 和等待中的用户确认。
+   *
+   * <p>取消不抹除已发生的工具事实：结果已知的调用保留真实结果，未收到结果的
+   * 调用先补写明确的取消/结果未知记录并作为稳定消息发布，再收敛终态。
+   * 直接使用 Engine 的宿主因此同时通过事件与 result 获得可继续的工作上下文。
+   */
   cancel(): void {
+    if (this.appendTerminalToolRecords('cancelled')) {
+      this.publishMessages();
+    }
     this.settleSuccess(this.snapshotResult({ type: 'cancelled' }), true);
   }
 
@@ -425,6 +450,11 @@ class DefaultAgentExecution implements AgentExecution {
   private settleFailure(cause: unknown): void {
     if (!this.isRunning()) {
       return;
+    }
+    // 失败终态同样不能留下未配对的 Tool Call：补写记录后先发布一次稳定消息，
+    // 让 Controller 的历史在 RUN_FAILED 之前就包含可继续的工作上下文。
+    if (this.appendTerminalToolRecords('failed')) {
+      this.publishMessages();
     }
     this.lifecycle = 'settling';
     this.stopPendingWork();
@@ -483,19 +513,18 @@ class DefaultAgentExecution implements AgentExecution {
       if (requiresCompaction) {
         this.publishEvent({ type: 'status', status: 'compacting-context' });
       }
-      const preparedContext = requiresCompaction
-        ? await this.contextManager.prepareForModelCall({
-          conversation: pendingConversation,
-          callContext: {
-            traceId: this.input.traceId,
-            conversationId: this.input.conversationId,
-          },
-          signal,
-        })
-        : {
-          conversation: pendingConversation,
-          modelMessages: this.contextManager.buildModelMessages(pendingConversation),
-        };
+      // 每次模型调用都经过统一输入准备边界：压缩决策、工作消息构造与最终窗口
+      // 预算检查（含本轮 Tool 定义与输出预留）都由 ContextManager 收敛，
+      // Runtime 不复制预算语义，也不存在绕过最终检查的旁路。
+      const preparedContext = await this.contextManager.prepareForModelCall({
+        conversation: pendingConversation,
+        tools,
+        callContext: {
+          traceId: this.input.traceId,
+          conversationId: this.input.conversationId,
+        },
+        signal,
+      });
       if (!this.isRunning()) {
         return this.snapshotResult({ type: 'cancelled' });
       }
@@ -576,6 +605,7 @@ class DefaultAgentExecution implements AgentExecution {
         return this.snapshotResult({ type: 'cancelled' });
       }
       this.requireWithinDeadline();
+      this.openToolBatch(preparedTools);
       for (const prepared of preparedTools) {
         if (!this.isRunning()) {
           return this.snapshotResult({ type: 'cancelled' });
@@ -593,6 +623,7 @@ class DefaultAgentExecution implements AgentExecution {
         working.push(toolMessage);
         this.stableMessages.push(toolMessage);
         this.publishMessages();
+        this.openToolCalls.delete(prepared.call.callId);
       }
     }
     throw maxModelCallsError(this.limits.maxModelCalls);
@@ -722,6 +753,10 @@ class DefaultAgentExecution implements AgentExecution {
       }
     }
 
+    // 从这里开始调用已发出：即使随后被中止，也不能声称“未执行”，
+    // 终态记录必须表达为结果未知并要求用户核实。
+    this.markToolInvoked(toolCall.callId);
+
     let result: ToolCallResult;
     try {
       this.requireWithinDeadline();
@@ -748,7 +783,13 @@ class DefaultAgentExecution implements AgentExecution {
       throw cause;
     }
     this.requireWithinDeadline();
-    assertToolResultLimit(result.content, this.limits.maxToolResultCharacters);
+    try {
+      assertToolResultLimit(result.content, this.limits.maxToolResultCharacters);
+    } catch (cause) {
+      // 结果真实存在但无法回填：终态记录必须如实说明，不能伪装成“未执行”或“未知”。
+      this.markToolResultRejected(toolCall.callId);
+      throw cause;
+    }
     // Hook 是观察端口：其异常必须终止 Execution，不能被误报成 Tool 业务失败。
     this.publishToolResult(toolCall, result);
     this.publishHook({
@@ -832,6 +873,74 @@ class DefaultAgentExecution implements AgentExecution {
       messages: [...this.stableMessages],
       modelContext: snapshotModelContext(this.stableModelContext),
     });
+  }
+
+  /** 登记整批 Tool Call 为“未收到结果”；真实结果回填后逐个移除。 */
+  private openToolBatch(prepared: readonly PreparedToolCall[]): void {
+    for (const entry of prepared) {
+      this.openToolCalls.set(entry.call.callId, {
+        callId: entry.call.callId,
+        name: entry.call.name,
+        state: 'pending',
+      });
+    }
+  }
+
+  /** 标记调用已发出；此后任何中止都必须按“结果未知”而不是“未执行”记录。 */
+  private markToolInvoked(callId: string): void {
+    const open = this.openToolCalls.get(callId);
+    if (open != null && open.state === 'pending') {
+      open.state = 'invoked';
+    }
+  }
+
+  /** 标记结果已返回但超过单结果上限：该调用有真实副作用，只是结果无法回填。 */
+  private markToolResultRejected(callId: string): void {
+    const open = this.openToolCalls.get(callId);
+    if (open != null && open.state === 'invoked') {
+      open.state = 'result-rejected';
+    }
+  }
+
+  /**
+   * 按每个未闭合 Tool Call 的真实事实补写终态记录，并清空跟踪表。
+   *
+   * <p>已确认的中止契约（2026-09-05）：尚未执行的调用（含等待确认）明确记为
+   * “未执行”；调用已发出但结果未知时明确表达“结果未知”，要求用户先核实是否
+   * 产生实际效果，不自动重复执行；结果超限未回填时如实说明结果已存在但未进入
+   * 对话。禁止编造成功结果，也禁止静默丢弃调用。记录作为普通 tool 消息进入
+   * 稳定历史，下一轮模型输入因此始终严格配对。
+   *
+   * @return 是否补写了至少一条记录；无可补记录时返回 false，调用方据此避免重复发布
+   */
+  private appendTerminalToolRecords(reason: 'cancelled' | 'failed'): boolean {
+    if (this.openToolCalls.size === 0) {
+      return false;
+    }
+    const open = [...this.openToolCalls.values()];
+    this.openToolCalls.clear();
+    for (const entry of open) {
+      const content = entry.state === 'pending'
+        ? `工具 ${entry.name} 未执行：`
+          + (reason === 'cancelled' ? '本轮执行已被用户取消。' : '本轮执行因错误终止。')
+        : entry.state === 'result-rejected'
+          ? `工具 ${entry.name} 已执行并返回结果，但结果超过框架允许的单结果上限，`
+            + '未回填到对话历史。请与用户核实实际执行效果后再决定后续操作。'
+          : `工具 ${entry.name} 的执行结果未知：调用已发出但执行在结果返回前被中止。`
+            + '请勿假设成功或失败，需先与用户核实是否产生了实际效果，再决定后续操作。';
+      this.stableMessages.push(snapshotAgentMessage({
+        id: this.nextId('message'),
+        role: 'tool',
+        blocks: [{
+          type: 'tool-result',
+          callId: entry.callId,
+          name: entry.name,
+          status: 'error',
+          content: [{ type: 'text', text: content }],
+        }],
+      }));
+    }
+    return true;
   }
 
   /**

@@ -598,10 +598,23 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(model.calls).toHaveLength(1);
     expect(events.some(event => event.type === 'tool-result')).toBe(false);
+    // 超限内容绝不进入对话；但历史不能留下未配对 Tool Call，
+    // 终态记录如实说明“已执行、结果超限未回填”。
     const committed = events.filter(event => event.type === 'messages');
-    expect(committed).toHaveLength(1);
+    expect(committed).toHaveLength(2);
     expect(committed[0]).toMatchObject({
       messages: [{ role: 'assistant', blocks: [{ type: 'tool-call' }] }],
+    });
+    expect(committed[1]?.messages).toHaveLength(2);
+    expect(JSON.stringify(committed[1]?.messages)).not.toContain('1234');
+    expect(committed[1]?.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'error',
+        content: [{ text: expect.stringContaining('结果超过') }],
+      }],
     });
   });
 
@@ -661,6 +674,8 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
       hooks: [{ onEvent: event => hooks.push(event) }],
     }).start(input(toolSnapshot([])), event => events.push(event));
 
+    // 每次模型调用前都会经过统一的输入准备边界（异步），先等待其进入模型流。
+    await nextTask();
     expect(model.calls).toBe(1);
     execution.cancel();
     await expect(execution.result).resolves.toMatchObject({

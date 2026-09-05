@@ -2,6 +2,7 @@ package io.patchbridge.agent.mcp;
 
 import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.error.ToolExecutionException;
+import io.patchbridge.agent.core.error.ToolVersionMismatchException;
 import io.patchbridge.agent.core.tool.ToolAnnotations;
 import io.patchbridge.agent.core.tool.ToolCallResult;
 import io.patchbridge.agent.core.tool.ToolDefinition;
@@ -15,6 +16,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -26,6 +28,10 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>刷新失败保留旧工具，并把 DOWN、错误和下次重试时间一起原子发布到快照；
  * 这是 Admin 可见的显式 stale-while-revalidate 策略，不会静默伪装成健康状态。
+ *
+ * <p>版本契约：导入的每个 Tool 都携带定义/路由版本引用（{@link McpToolVersions}），
+ * 随发现下发给浏览器；调用时在“即将参与路由的同一份 ServerState”上复核该引用，
+ * 配置或远端定义发生语义变化后旧引用明确失败，不会把旧调用静默执行到新目标。
  */
 public class McpToolRegistry implements ToolProvider {
 
@@ -141,10 +147,17 @@ public class McpToolRegistry implements ToolProvider {
         return all;
     }
 
-    /** 路由并调用远程 MCP Tool；工具调用本身不需要刷新锁。 */
+    /**
+     * 路由并调用远程 MCP Tool；工具调用本身不需要刷新锁。
+     *
+     * <p>版本复核在本次实际读取的 ServerState 上完成：该 state 的 config 就是
+     * 随后 client.callTool 使用的路由目标，因此“校验通过的版本”与“实际执行的
+     * 目标”不可能来自不同代配置；中途发生的配置重建只会影响之后的新调用。
+     */
     @Override
-    public ToolCallResult call(String namespacedLocalName, Map<String, Object> arguments,
-                               AiRequestContext requestContext) throws ToolExecutionException {
+    public ToolCallResult call(String namespacedLocalName, String definitionVersion,
+                               Map<String, Object> arguments, AiRequestContext requestContext)
+            throws ToolExecutionException, ToolVersionMismatchException {
         synchronizeConfiguration();
         int dot = namespacedLocalName.indexOf('.');
         if (dot <= 0) {
@@ -156,10 +169,39 @@ public class McpToolRegistry implements ToolProvider {
         if (state == null || !state.config.isEnabled()) {
             throw new ToolExecutionException("MCP Server 不可用或未配置: " + serverKey);
         }
+        verifyDefinitionVersion(state, remoteName, definitionVersion);
         try {
             return client.callTool(state.config, remoteName, arguments, requestContext);
         } catch (McpException e) {
             throw new ToolExecutionException("MCP Tool 调用失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 在即将参与路由的 ServerState 上复核定义/路由版本引用。
+     *
+     * <p>工具必须仍然存在于当前快照：配置重建后的空快照、include/exclude 调整或
+     * 远端已下线都会让旧调用在这里明确失败，而不是带着过期语义打到远端。
+     */
+    private static void verifyDefinitionVersion(ServerState state, String remoteName,
+                                                String definitionVersion)
+            throws ToolExecutionException, ToolVersionMismatchException {
+        ToolDefinition current = null;
+        for (ToolDefinition tool : state.snapshot.tools) {
+            if (remoteName.equals(McpToolVersions.remoteNameOf(tool))) {
+                current = tool;
+                break;
+            }
+        }
+        if (current == null) {
+            throw new ToolExecutionException(
+                    "MCP Tool 不在当前工具快照中，可能已下线或被配置排除: "
+                            + state.key + "." + remoteName);
+        }
+        if (!Objects.equals(definitionVersion, current.getVersion())) {
+            throw new ToolVersionMismatchException(
+                    "MCP Tool 定义或路由已更新，当前调用携带的版本引用已过期，"
+                            + "请重新发现工具后重试: " + state.key + "." + remoteName);
         }
     }
 
@@ -312,12 +354,18 @@ public class McpToolRegistry implements ToolProvider {
             List<String> permissions = permission == null
                     ? Collections.<String>emptyList()
                     : Collections.singletonList(permission);
+            ToolAnnotations annotations = new ToolAnnotations(remote.isReadOnlyHint(),
+                    remote.isDestructiveHint(), remote.isIdempotentHint(),
+                    remote.isRequireConfirmation());
+            // 版本引用覆盖路由配置与导入内容：配置重建或远端定义变化都会产生新版本，
+            // 浏览器据此在下次调用时被明确拒绝，不会把旧语义执行到新目标。
+            String version = McpToolVersions.versionOf(state.key, state.config,
+                    remote.getName(), remote.getTitle(), remote.getDescription(),
+                    remote.getInputSchema(), annotations, permissions);
             imported.add(new ToolDefinition(
                     namespaceRoot + "." + state.key + "." + remote.getName(),
                     remote.getTitle(), remote.getDescription(), remote.getInputSchema(),
-                    new ToolAnnotations(remote.isReadOnlyHint(), remote.isDestructiveHint(),
-                            remote.isIdempotentHint(), remote.isRequireConfirmation()),
-                    ToolSource.MCP, permissions));
+                    annotations, ToolSource.MCP, permissions, version));
         }
         return Collections.unmodifiableList(imported);
     }

@@ -85,8 +85,13 @@ async function main() {
       && Number.isSafeInteger(modelConfiguration.body?.keepRecentTokens)
       && modelConfiguration.body.keepRecentTokens > 0
       && modelConfiguration.body.keepRecentTokens
-        < modelConfiguration.body.automaticThresholdTokens,
-  '服务端公开唯一模型窗口、80% 自动阈值与合法近期预算',
+        < modelConfiguration.body.automaticThresholdTokens
+      && Number.isSafeInteger(modelConfiguration.body?.reservedOutputTokens)
+      && modelConfiguration.body.reservedOutputTokens > 0
+      && modelConfiguration.body.automaticThresholdTokens
+        + modelConfiguration.body.reservedOutputTokens
+        < contextWindowTokens,
+  '服务端公开唯一模型窗口、80% 自动阈值、合法近期预算与输出预留',
   JSON.stringify(modelConfiguration.body));
 
   console.log('== 真实模型网关结构化 SSE ==');

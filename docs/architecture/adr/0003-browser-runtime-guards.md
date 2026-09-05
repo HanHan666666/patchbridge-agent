@@ -111,6 +111,12 @@ interface AgentRunResult {
 - `cancelled` 只表示用户或宿主主动调用 `cancel()`，不展示为失败；
 - 超时、资源超限、模型协议错误和编程错误仍通过 `result` rejection 显式传播，不伪装成普通结果。
 
+2026-09-05 审查（VA-03）补充确认取消/失败后的继续语义：终态收敛时 Runtime 按每个未闭合
+Tool Call 的真实事实补写终态 Tool Result——未执行（含等待确认）记为“未执行”，调用已发出
+记为“结果未知”并要求用户先核实，结果超限未回填的如实说明；已完成调用保留真实结果。
+记录作为普通 tool 消息进入稳定历史，展示历史与下一次模型输入遵守同一规则，下一轮出站
+消息不允许未配对 Tool Call。继续对话不等于恢复被取消的 Execution 或自动补执行剩余工具。
+
 Lifecycle Hook 和 Call Trace 使用同一份 `outcome`，不再维护第二套完成分类。
 普通生命周期 Hook 抛错仍会使本轮明确失败；但一旦 Runtime 已经选定
 `execution-completed` 或 `execution-failed`，终态观察 Hook 就不能反向改判结果。
@@ -196,6 +202,12 @@ reader 清理错误推翻。
 如果宿主需要把某类明确异常转换为模型可见的业务失败，应当在 Tool Adapter 或已有
 `ToolInterceptor` 中显式返回 `ToolCallResult`。Runtime 不再把所有未知异常包装成
 “工具未执行：未知错误”，以免隐藏框架编程错误。
+
+2026-09-05 审查（VA-04）将该分类贯通到 Java 注解 Tool：`AnnotatedToolProvider` 不再把业务
+方法抛出的异常统一转换为 `isError=true` 结果——显式返回 `ToolCallResult.ofError(...)` 才是
+业务失败；方法抛出的任何异常都以脱敏的 `ToolExecutionException` 终止本轮（HTTP 500
+`TOOL_FAILED`，浏览器 Runtime 按既有契约终止 Execution），完整详情只写服务端日志。
+三种 Tool 来源（前端、本地注解、MCP）遵守同一分类原则，不引入更多异常层次。
 
 用户在 Human-in-the-loop 中拒绝 Tool 仍是 Runtime 自身明确生成的可见 Tool Result，不属于异常。
 

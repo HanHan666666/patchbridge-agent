@@ -45,13 +45,14 @@ import java.util.Set;
  * 以保证事务、鉴权等宿主切面不会被绕开。
  *
  * <p>模型参数采用严格对象边界：拒绝未知字段，校验必填与基本类型参数，并使用 Jackson
- * {@link JavaType} 保留集合等泛型信息。业务代码若抛异常，完整详情只写服务端日志，
- * 返回给模型的是稳定的通用错误，避免泄露内部实现与敏感数据。
+ * {@link JavaType} 保留集合等泛型信息。
+ *
+ * <p>失败分类与 Browser Runtime 契约对齐（ADR-003）：业务方法显式返回
+ * {@link ToolCallResult#ofError(String)} 才是模型可继续推理的业务失败；
+ * 方法抛出的未识别异常属于未预期失败，完整详情只写服务端日志，对外以脱敏的
+ * {@link ToolExecutionException} 终止本轮，绝不转换成 isError 结果让模型继续调用。
  */
 public class AnnotatedToolProvider implements ToolProvider, SmartInitializingSingleton {
-
-    /** 返回给模型的业务异常文案；具体原因只能出现在服务端日志中。 */
-    private static final String SAFE_EXECUTION_ERROR = "Tool 执行失败";
 
     /** 当前适配器的日志记录器。 */
     private static final Logger log = LoggerFactory.getLogger(AnnotatedToolProvider.class);
@@ -108,15 +109,20 @@ public class AnnotatedToolProvider implements ToolProvider, SmartInitializingSin
     /**
      * 严格绑定模型参数并通过 Spring 代理调用业务方法。
      *
+     * <p>本地 @AiTool 在启动期注册、运行期不可变，因此 definitionVersion 恒为
+     * {@code null} 且无需校验；Registry 层的 null 对 null 一致性检查已经覆盖该契约。
+     *
      * @param localName Provider 内的 Tool 名称
+     * @param definitionVersion 调用方携带的版本引用；本地 Tool 恒为 null
      * @param arguments 模型生成的业务参数
      * @param requestContext 服务端可信请求上下文
      * @return 可直接返回给模型的调用结果
-     * @throws ToolExecutionException Tool 不存在、参数不合法或反射调用失败
+     * @throws ToolExecutionException Tool 不存在、参数不合法或业务方法抛出未识别异常
      */
     @Override
-    public ToolCallResult call(String localName, Map<String, Object> arguments,
-                               AiRequestContext requestContext) throws ToolExecutionException {
+    public ToolCallResult call(String localName, String definitionVersion,
+                               Map<String, Object> arguments, AiRequestContext requestContext)
+            throws ToolExecutionException {
         ToolMethod tool = toolsByName.get(localName);
         if (tool == null) {
             throw new ToolExecutionException("本地 Tool 不存在: " + localName);
@@ -127,9 +133,18 @@ public class AnnotatedToolProvider implements ToolProvider, SmartInitializingSin
             Object result = tool.invocableMethod.invoke(tool.bean, args);
             return toResult(result);
         } catch (InvocationTargetException e) {
-            Throwable cause = e.getTargetException() == null ? e : e.getTargetException();
-            log.warn("@AiTool [{}] 业务执行异常", localName, cause);
-            return ToolCallResult.ofError(SAFE_EXECUTION_ERROR);
+            Throwable target = e.getTargetException() == null ? e : e.getTargetException();
+            // 失败分类只有两个通道：业务方法显式返回 ToolCallResult.ofError(...)
+            // 是模型可继续推理的业务失败；方法抛出的任何异常都是未预期失败，
+            // 完整详情只进服务端日志，以脱敏文案终止本轮，与 ADR-003 的
+            // Runtime 错误分类保持一致。这里不做第二层异常甄别，
+            // 避免宿主可控消息绕过脱敏进入浏览器。
+            log.warn("@AiTool [{}] 业务方法抛出未识别异常，本轮 Tool 调用已终止", localName, target);
+            if (target instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new ToolExecutionException(
+                    "Tool 执行发生未预期异常，本轮已终止", target);
         } catch (IllegalAccessException e) {
             throw new ToolExecutionException("Tool 方法不可调用: " + localName, e);
         } catch (IllegalArgumentException e) {
@@ -267,12 +282,13 @@ public class AnnotatedToolProvider implements ToolProvider, SmartInitializingSin
         }
 
         Map<String, Object> schema = schemaGenerator.generate(schemaMethod);
+        // 本地 Tool 运行期不可变：definitionVersion 恒为 null，不参与动态版本一致性检查。
         ToolDefinition definition = new ToolDefinition(
                 namespace + "." + localName, localName, candidate.annotation.description(), schema,
                 new ToolAnnotations(candidate.annotation.readOnly(),
                         candidate.annotation.destructive(), candidate.annotation.idempotent(),
                         candidate.annotation.requireConfirmation()),
-                ToolSource.LOCAL, Arrays.asList(candidate.annotation.permissions()));
+                ToolSource.LOCAL, Arrays.asList(candidate.annotation.permissions()), null);
 
         List<ParamBinding> bindings = createBindings(schemaMethod, candidate.declarationMethod);
         Set<String> argumentNames = new LinkedHashSet<String>();

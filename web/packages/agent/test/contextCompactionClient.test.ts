@@ -24,6 +24,7 @@ describe('HttpContextCompactionGateway', () => {
       contextWindowTokens: 128_000,
       automaticThresholdTokens: 102_400,
       keepRecentTokens: 20_000,
+      reservedOutputTokens: 12_800,
     });
     const gateway = new HttpContextCompactionGateway('/ai/', transport);
 
@@ -31,6 +32,7 @@ describe('HttpContextCompactionGateway', () => {
       contextWindowTokens: 128_000,
       automaticThresholdTokens: 102_400,
       keepRecentTokens: 20_000,
+      reservedOutputTokens: 12_800,
     });
     expect(transport.request).toHaveBeenCalledWith('/ai/model/config',
       expect.objectContaining({ method: 'GET' }));
@@ -49,6 +51,12 @@ describe('HttpContextCompactionGateway', () => {
         contextWindowTokens: 1_000,
         automaticThresholdTokens: 800,
         keepRecentTokens: 800,
+      },
+      {
+        contextWindowTokens: 1_000,
+        automaticThresholdTokens: 800,
+        keepRecentTokens: 200,
+        reservedOutputTokens: 300,
       },
     ];
 

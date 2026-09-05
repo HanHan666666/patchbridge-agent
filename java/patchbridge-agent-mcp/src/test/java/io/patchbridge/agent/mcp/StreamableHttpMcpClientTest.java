@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -286,9 +287,10 @@ class StreamableHttpMcpClientTest {
         assertEquals(Collections.singletonList("ai:mcp:inventory:read"),
                 tool.getPermissions(), "权限覆盖在导入时生效");
         assertTrue(tool.getAnnotations().isReadOnlyHint());
+        assertNotNull(tool.getVersion(), "导入的动态 Tool 必须携带版本引用");
 
         ToolCallResult result = registry.call("inventory.query_stock",
-                new HashMap<String, Object>(), context());
+                tool.getVersion(), new HashMap<String, Object>(), context());
         assertEquals("stock=42", result.getContent().get(0).getText());
 
         // 被排除的 Tool 通过统一 Registry 不可发现、不可调用
@@ -298,7 +300,8 @@ class StreamableHttpMcpClientTest {
                         new io.patchbridge.agent.core.auth.AuthenticatedToolAccessPolicy());
         assertNull(unified.find("mcp.inventory.reset_cache"));
         assertThrows(ToolExecutionException.class, () ->
-                unified.call("mcp.inventory.reset_cache", new HashMap<String, Object>(), context()));
+                unified.call("mcp.inventory.reset_cache", null,
+                        new HashMap<String, Object>(), context()));
     }
 
     @Test
@@ -306,7 +309,7 @@ class StreamableHttpMcpClientTest {
         McpToolRegistry registry = new McpToolRegistry(
                 new LinkedHashMap<String, McpServerConfig>(), new StreamableHttpMcpClient(), "mcp");
         assertThrows(ToolExecutionException.class, () ->
-                registry.call("nobody.tool", new HashMap<String, Object>(), context()));
+                registry.call("nobody.tool", null, new HashMap<String, Object>(), context()));
     }
 
     private static Map<String, McpServerConfig> servers(String key, McpServerConfig config) {

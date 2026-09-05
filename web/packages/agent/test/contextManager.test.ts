@@ -25,6 +25,7 @@ const CONFIGURATION: ContextCompactionConfiguration = Object.freeze({
   contextWindowTokens: 1_000,
   automaticThresholdTokens: 800,
   keepRecentTokens: 400,
+  reservedOutputTokens: 100,
 });
 
 /** 创建单文本消息。 */
@@ -102,6 +103,7 @@ describe('DefaultContextManager', () => {
 
     const prepared = await manager.prepareForModelCall({
       conversation: original,
+      tools: [],
       callContext: { traceId: 'trace-1', conversationId: 'conversation-1' },
       signal: new AbortController().signal,
     });
@@ -134,6 +136,7 @@ describe('DefaultContextManager', () => {
 
     const prepared = await manager.prepareForModelCall({
       conversation: original,
+      tools: [],
       callContext: { traceId: 'trace-2' },
       signal: new AbortController().signal,
     });
@@ -294,5 +297,129 @@ describe('DefaultContextManager', () => {
 
     expect(() => manager.recordModelResponse(current, response, null, null))
       .toThrow('模型 Provider 未返回必需的 token usage');
+  });
+
+  // ---------- VA-05：最终窗口预算检查 ----------
+
+  it('VA-05：压缩后的输入仍超过窗口预算时明确失败，检查点不被提交', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const messages = Object.freeze([
+      textMessage('system-1', 'system', '系统规则'),
+      textMessage('user-old', 'user', '旧问题'.repeat(80)),
+      textMessage('user-tail', 'user', '过大的最新安全段'.repeat(500)),
+    ]);
+    const original = conversation(messages, 900);
+    const historyBefore = original.messages;
+    const modelContextBefore = original.modelContext;
+
+    // 基线 900 已越过阈值 800 触发压缩；保留段（单段 5000+ 字节）超过近期预算 400
+    // 也必须整体保留，压缩后估算远超“窗口 1000 − 输出预留 100”。
+    await expect(manager.prepareForModelCall({
+      conversation: original,
+      tools: [],
+      callContext: { traceId: 'trace-over', conversationId: 'conversation-1' },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'CONTEXT_WINDOW_EXCEEDED',
+      retryable: false,
+    });
+
+    // 摘要调用发生过，但失败结果绝不作为可用检查点提交
+    expect(requests).toHaveLength(1);
+    expect(original.modelContext).toBe(modelContextBefore);
+    expect(original.modelContext.checkpoint).toBeNull();
+    expect(original.messages).toBe(historyBefore);
+  });
+
+  it('VA-05：未触发压缩时最终检查同样覆盖本轮 Tool 定义与输出预留', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const original = conversation([
+      textMessage('user-1', 'user', '问题'),
+      textMessage('assistant-1', 'assistant', '答案'),
+    ], 700);
+
+    await expect(manager.prepareForModelCall({
+      conversation: original,
+      tools: [{
+        name: 'local.huge',
+        description: 'x'.repeat(3_000),
+        inputSchema: { type: 'object' },
+      }],
+      callContext: { traceId: 'trace-tools', conversationId: 'conversation-1' },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
+
+    // 用量 700 低于阈值 800：压缩从未发生，失败只来自最终预算检查
+    expect(requests).toHaveLength(0);
+  });
+
+  it('VA-05：首次调用尚无 usage 时按完整出站输入估算，超大输入明确失败', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const firstInput = conversation([
+      textMessage('user-1', 'user', '超大首次输入'.repeat(800)),
+    ], 0);
+    const withoutUsage = Object.freeze({
+      messages: firstInput.messages,
+      modelContext: Object.freeze({
+        ...EMPTY_MODEL_CONTEXT,
+        usage: null,
+      }),
+    });
+
+    await expect(manager.prepareForModelCall({
+      conversation: withoutUsage,
+      tools: [],
+      callContext: { traceId: 'trace-first', conversationId: null },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
+    expect(requests).toHaveLength(0);
+  });
+
+  it('VA-05：手动压缩产生装不下的检查点时明确失败并保留完整历史', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const messages = Object.freeze([
+      textMessage('system-1', 'system', '系统规则'),
+      textMessage('user-old', 'user', '旧问题'.repeat(80)),
+      textMessage('user-tail', 'user', '过大的最新安全段'.repeat(500)),
+    ]);
+    const original = conversation(messages, 900);
+    const modelContextBefore = original.modelContext;
+
+    await expect(manager.compact(
+      original,
+      'manual',
+      { traceId: 'trace-manual', conversationId: 'conversation-1' },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
+
+    expect(original.modelContext).toBe(modelContextBefore);
+    expect(original.modelContext.checkpoint).toBeNull();
+  });
+
+  it('VA-05：预算内输入正常返回，错误消息说明窗口与输出预留来源', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const original = conversation([
+      textMessage('user-1', 'user', '问题'),
+      textMessage('assistant-1', 'assistant', '答案'),
+    ], 700);
+
+    const prepared = await manager.prepareForModelCall({
+      conversation: original,
+      tools: [{
+        name: 'local.small',
+        description: '小工具',
+        inputSchema: { type: 'object' },
+      }],
+      callContext: { traceId: 'trace-ok', conversationId: 'conversation-1' },
+      signal: new AbortController().signal,
+    });
+
+    expect(prepared.modelMessages).toHaveLength(2);
+    expect(requests).toHaveLength(0);
   });
 });

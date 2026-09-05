@@ -77,6 +77,7 @@ public class ContextCompactionController {
         body.put("contextWindowTokens", settings.getContextWindowTokens());
         body.put("automaticThresholdTokens", settings.getAutomaticThresholdTokens());
         body.put("keepRecentTokens", settings.getKeepRecentTokens());
+        body.put("reservedOutputTokens", settings.getReservedOutputTokens());
         return body;
     }
 

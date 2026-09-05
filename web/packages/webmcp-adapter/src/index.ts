@@ -164,6 +164,8 @@ export class WebMcpToolProvider implements BrowserToolProvider {
         },
         source: 'WEBMCP',
         permissions: [],
+        // WebMCP Tool 由页面协议在本地执行，不存在服务端路由，版本引用恒为 null。
+        version: null,
       },
       invoke: async (arguments_, context, signal) => ({
         toolCallId: context.toolCallId,

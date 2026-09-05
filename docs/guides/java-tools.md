@@ -53,7 +53,10 @@ public class DeviceTools {
 
 - Starter 通过 Spring Bean/代理调用 Tool，保留 AOP、事务和方法安全语义；
 - Tool 默认不自动重试，即使标记 idempotent；
-- Tool 业务结果可以返回 <code>isError=true</code> 且 HTTP 仍为 200，Browser Runtime 会生成 error Tool Result 并让模型继续处理；
+- 失败分类只有两个通道：业务方法显式返回 <code>ToolCallResult.ofError(...)</code>（或返回值被规范化为
+  <code>isError=true</code> 的结果）是模型可继续推理的业务失败，HTTP 仍为 200；方法抛出的任何异常
+  都是未预期失败，完整详情只写服务端日志，对外以脱敏的 <code>ToolExecutionException</code>
+  （<code>500 TOOL_FAILED</code>）终止本轮，后续模型调用为零。不要依赖“抛异常也算业务失败”的旧语义；
 - Browser <code>ToolCallResult</code> 必须精确包含字符串 <code>toolCallId</code>、字符串 <code>content</code> 和布尔 <code>isError</code>，且调用 ID 与请求一致；<code>null</code> ID、额外字段或宽松类型均按 <code>MODEL_PROTOCOL_ERROR</code> 终止；
 - Tool Adapter、Interceptor 或执行器 throw/Promise rejection 表示未预期基础设施或编程失败，会终止 Execution；需要交给模型理解的预期业务失败，必须在 Adapter/Interceptor 中显式转换为 <code>ToolCallResult</code>；
 - <code>requireConfirmation</code> 只是 Browser 交互层，不能替代服务端授权。

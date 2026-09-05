@@ -6,6 +6,7 @@ import io.patchbridge.agent.core.error.AgentErrorCode;
 import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.error.ToolAccessDeniedException;
 import io.patchbridge.agent.core.error.ToolExecutionException;
+import io.patchbridge.agent.core.error.ToolVersionMismatchException;
 import io.patchbridge.agent.mcp.McpConfigurationConflictException;
 import io.patchbridge.agent.mcp.McpConfigurationReadOnlyException;
 import io.patchbridge.agent.mcp.McpException;
@@ -47,6 +48,12 @@ public class PatchBridgeAgentExceptionHandler {
     @ExceptionHandler(ToolAccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> forbidden(ToolAccessDeniedException e) {
         return error(HttpStatus.FORBIDDEN, AgentErrorCode.TOOL_FORBIDDEN, e.getMessage(), null);
+    }
+
+    /** 过期版本引用使用稳定 409：提示重新发现工具，而不是原样重放旧调用。 */
+    @ExceptionHandler(ToolVersionMismatchException.class)
+    public ResponseEntity<Map<String, Object>> toolVersionMismatch(ToolVersionMismatchException e) {
+        return error(HttpStatus.CONFLICT, AgentErrorCode.TOOL_VERSION_MISMATCH, e.getMessage(), null);
     }
 
     /** Tool 业务执行失败使用稳定错误码，具体异常已在执行端完成脱敏。 */

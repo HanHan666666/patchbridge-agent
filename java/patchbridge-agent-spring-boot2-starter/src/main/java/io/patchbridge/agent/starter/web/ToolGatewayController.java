@@ -6,6 +6,7 @@ import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.error.AgentErrorCode;
 import io.patchbridge.agent.core.error.ToolAccessDeniedException;
 import io.patchbridge.agent.core.error.ToolExecutionException;
+import io.patchbridge.agent.core.error.ToolVersionMismatchException;
 import io.patchbridge.agent.core.invocation.ToolInvocationPipeline;
 import io.patchbridge.agent.core.tool.ToolCallResult;
 import io.patchbridge.agent.core.tool.ToolContent;
@@ -85,7 +86,7 @@ public class ToolGatewayController {
 
         try {
             ToolCallResult result = invocationPipeline.invoke(
-                    request.getName(), request.getArguments(), context);
+                    request.getName(), request.getVersion(), request.getArguments(), context);
             String contentText = toText(result.getContent());
             boolean success = !result.isError();
             auditTool(traceId, request, user, tool, success,
@@ -102,6 +103,11 @@ public class ToolGatewayController {
             auditTool(traceId, request, user, tool, false, AgentErrorCode.TOOL_FORBIDDEN,
                     e.getMessage(), System.currentTimeMillis() - start, request.getArguments(), null);
             return error(HttpStatus.FORBIDDEN, AgentErrorCode.TOOL_FORBIDDEN, e.getMessage());
+        } catch (ToolVersionMismatchException e) {
+            // 过期版本引用是客户端状态冲突：明确 409 让浏览器重新发现工具，绝不放行旧调用。
+            auditTool(traceId, request, user, tool, false, AgentErrorCode.TOOL_VERSION_MISMATCH,
+                    e.getMessage(), System.currentTimeMillis() - start, request.getArguments(), null);
+            return error(HttpStatus.CONFLICT, AgentErrorCode.TOOL_VERSION_MISMATCH, e.getMessage());
         } catch (ToolExecutionException e) {
             auditTool(traceId, request, user, tool, false, AgentErrorCode.TOOL_FAILED,
                     e.getMessage(), System.currentTimeMillis() - start, request.getArguments(), null);

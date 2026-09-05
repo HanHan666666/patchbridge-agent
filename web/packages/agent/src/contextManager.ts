@@ -6,6 +6,7 @@
  * 手动压缩和恢复后的下一次模型调用使用完全相同的上下文语义。
  */
 import type {
+  AgentError,
   AgentMessage,
   ContentBlock,
   ContextCompactionConfiguration,
@@ -19,7 +20,11 @@ import type {
   ContextCompactionGateway,
   ContextCompactionRequest,
 } from './clients/contextCompactionClient';
-import type { ModelCallContext, ModelUsage } from './clients/modelClient';
+import type {
+  ModelCallContext,
+  ModelToolDefinition,
+  ModelUsage,
+} from './clients/modelClient';
 import { invalidStateError } from './errors';
 import {
   snapshotAgentMessage,
@@ -46,6 +51,8 @@ export interface ContextManagerOptions {
 export interface PrepareModelContextInput {
   /** 始终完整保留的当前会话上下文。 */
   readonly conversation: ConversationContext;
+  /** 本轮真正发送给 Provider 的 Tool 定义；输入预算必须覆盖它们的规模。 */
+  readonly tools: readonly ModelToolDefinition[];
   /** 模型调用的链路归属。 */
   readonly callContext: ModelCallContext;
   /** 与本次 Agent Execution 绑定的取消信号。 */
@@ -126,7 +133,14 @@ export class DefaultContextManager implements ContextManager {
     return this.configuration;
   }
 
-  /** 未达到 80% 阈值时只构造工作消息；达到阈值后必须先成功压缩。 */
+  /**
+   * 每次模型调用的统一输入准备边界：必要时先压缩，再执行最终窗口预算检查。
+   *
+   * <p>预算覆盖工作消息（含 system 指令与摘要检查点）、本轮 Tool 定义与输出预留。
+   * 一次压缩完成不能证明下一次请求装得下，因此检查在压缩完成后对最终出站输入
+   * 执行；超限明确失败并保留完整历史，由用户调整输入后重新发起，
+   * 绝不自动重复压缩、静默删除历史或更换模型。
+   */
   async prepareForModelCall(input: PrepareModelContextInput): Promise<PreparedModelContext> {
     const conversation = this.requiresAutomaticCompaction(input.conversation)
       ? await this.compact(
@@ -136,9 +150,11 @@ export class DefaultContextManager implements ContextManager {
         input.signal,
       )
       : input.conversation;
+    const modelMessages = this.buildModelMessages(conversation);
+    this.assertWithinInputBudget(conversation, modelMessages, input.tools);
     return Object.freeze({
       conversation,
-      modelMessages: this.buildModelMessages(conversation),
+      modelMessages,
     });
   }
 
@@ -149,6 +165,42 @@ export class DefaultContextManager implements ContextManager {
     }
     return measureCurrentTokens(conversation)
       >= this.getConfiguration().automaticThresholdTokens;
+  }
+
+  /**
+   * 最终输入预算检查：工作消息 + 本轮 Tool 定义 + 输出预留必须装进模型窗口。
+   *
+   * <p>计量优先使用 Provider 真实 usage 基线（加基线后新消息的保守估算），
+   * 避免用 UTF-8 字节上界重复计量已经精确计量过的历史；首次调用尚无 usage 时
+   * 才对完整出站输入做估算。超限抛出 CONTEXT_WINDOW_EXCEEDED，由 Runtime 终止
+   * 本轮，完整历史保留。
+   */
+  private assertWithinInputBudget(
+    conversation: ConversationContext,
+    modelMessages: readonly AgentMessage[],
+    tools: readonly ModelToolDefinition[],
+  ): void {
+    const configuration = this.getConfiguration();
+    const budgetTokens = this.inputBudgetTokens();
+    const estimatedTokens = conversation.modelContext.usage == null
+      ? estimateModelMessages(modelMessages) + estimateToolDefinitions(tools)
+      : measureCurrentTokens(conversation) + estimateToolDefinitions(tools);
+    if (estimatedTokens <= budgetTokens) {
+      return;
+    }
+    throw contextWindowExceededError({
+      estimatedTokens,
+      budgetTokens,
+      contextWindowTokens: configuration.contextWindowTokens,
+      reservedOutputTokens: configuration.reservedOutputTokens,
+      detail: '模型输入（工作消息、system 指令与本轮 Tool 定义）超过窗口预算',
+    });
+  }
+
+  /** 输入预算 = 窗口 − 输出预留；派生只来自服务端配置，不在此二次推导。 */
+  private inputBudgetTokens(): number {
+    const configuration = this.getConfiguration();
+    return configuration.contextWindowTokens - configuration.reservedOutputTokens;
   }
 
   /**
@@ -188,6 +240,18 @@ export class DefaultContextManager implements ContextManager {
     const lastMessage = plan.retainedTailMessages[plan.retainedTailMessages.length - 1]
       ?? plan.retainedSystemMessages[plan.retainedSystemMessages.length - 1]
       ?? null;
+    // 压缩成功不等于结果可用：保留段超过近期预算（如过大的最新安全段）时，
+    // 压缩后的工作上下文仍可能装不下窗口。此时必须拒绝该检查点，
+    // 调用方继续持有原模型上下文，完整历史不受影响。
+    if (estimatedTokensAfter > this.inputBudgetTokens()) {
+      throw contextWindowExceededError({
+        estimatedTokens: estimatedTokensAfter,
+        budgetTokens: this.inputBudgetTokens(),
+        contextWindowTokens: this.getConfiguration().contextWindowTokens,
+        reservedOutputTokens: this.getConfiguration().reservedOutputTokens,
+        detail: '压缩后的工作上下文仍超过模型窗口预算（近期消息过大或摘要过长）',
+      });
+    }
     const modelContext: ModelContext = Object.freeze({
       checkpoint: Object.freeze({
         id: checkpointId,
@@ -307,6 +371,44 @@ interface CompactionPlan {
   readonly retainedSystemMessages: readonly AgentMessage[];
   readonly retainedTailMessages: readonly AgentMessage[];
   readonly splitTurn: boolean;
+}
+
+/** 模型输入超限的明确上下文，供错误消息与测试断言使用。 */
+interface WindowBudgetExceededInput {
+  readonly estimatedTokens: number;
+  readonly budgetTokens: number;
+  readonly contextWindowTokens: number;
+  readonly reservedOutputTokens: number;
+  readonly detail: string;
+}
+
+/**
+ * 构造最终窗口预算检查失败的稳定错误。
+ *
+ * <p>该失败按已确认的契约终止本次模型调用：不自动重复压缩、不静默删除历史、
+ * 不更换模型；完整历史保留，用户调整输入后重新发起。
+ */
+function contextWindowExceededError(input: WindowBudgetExceededInput): AgentError {
+  return {
+    code: 'CONTEXT_WINDOW_EXCEEDED',
+    message: `${input.detail}：估算 ${input.estimatedTokens} tokens，`
+      + `可用预算 ${input.budgetTokens}`
+      + `（窗口 ${input.contextWindowTokens} − 输出预留 ${input.reservedOutputTokens}）。`
+      + '完整历史已保留，请缩短输入或开始新会话后重试',
+    retryable: false,
+  };
+}
+
+/** 估算本轮 Tool 目录占用：名称、描述与 Schema 按真实序列化字节计入上界。 */
+function estimateToolDefinitions(tools: readonly ModelToolDefinition[]): number {
+  let bytes = 0;
+  for (const tool of tools) {
+    bytes += 16
+      + utf8Length(tool.name)
+      + utf8Length(tool.description)
+      + utf8Length(JSON.stringify(tool.inputSchema));
+  }
+  return bytes;
 }
 
 /** 按“非 tool 起始消息 + 连续 tool 结果”分段，确保 Tool Call/Result 不被切开。 */

@@ -1,5 +1,10 @@
 # Runtime 契约参考
 
+> 当前实现限制：2026-09-05 已确认五处跨层缺口，涉及后端动态 Tool 快照、首轮会话保存、
+> 取消后的下一轮输入、Java Tool 未知异常分类，以及压缩后的最终窗口检查。以下契约应结合
+> [愿景与实现审查](../architecture/reviews/vision-and-implementation.md)阅读；问题当前状态见
+> [路线图](../roadmap.md)。本次记录没有变更公共类型或增加恢复、重试与降级行为。
+
 ## 厂商中立 Agent Runtime
 
 ### 为什么使用 Message + ContentBlock
@@ -299,6 +304,22 @@ controller.subscribe(state => {
 底层自定义 Engine 使用 `execution.respond({ interruptId, value })`。响应 ID 不匹配、重复
 响应或没有挂起中断时会明确失败；取消会消费等待槽，迟到批准不能重新启动 Tool。
 
+### 取消与失败后的继续语义
+
+取消或失败终止本轮 Execution 时，Runtime 按每个未闭合 Tool Call 的真实事实补写终态
+记录（普通 `tool` 消息，`status: "error"`），使完整历史始终严格配对、下一轮模型输入
+可直接消费：
+
+| 终止时的事实 | 补写内容 |
+| --- | --- |
+| 尚未执行（含等待确认） | 明确记为“未执行”，本轮执行已被取消或因错误终止 |
+| 调用已发出、结果未知 | 明确记为“结果未知”，要求先与用户核实是否产生实际效果，再决定后续操作 |
+| 已执行且结果已返回但超过单结果上限 | 如实记为“已执行、结果超限未回填” |
+
+已完成的 Tool 调用保留真实结果，不因整轮取消而抹除。继续对话不等于恢复被取消的
+Execution，也不会自动补执行剩余工具；结果未知的调用在用户核实之前必须当作未解决的
+工具交互对待。
+
 ---
 
 ## Tool Registry 与本轮快照
@@ -307,6 +328,13 @@ controller.subscribe(state => {
 Controller 在每轮开始前刷新唯一 `ToolRegistry`，把定义和调用路由一起冻结成
 `ToolRegistrySnapshot`。本轮模型看到什么，后续就只能调用同一 revision 的实现；
 运行中注册或注销 Tool 只影响下一轮。
+
+后端动态 Tool（当前为 MCP）的定义还携带服务端计算的**定义/路由版本引用**
+（`ToolDefinition.version`）：执行闭包绑定发现时刻冻结的定义副本，调用时把版本原样回传，
+服务端在授权检查之前校验它与当前定义是否一致。配置或远端定义发生语义变化后，
+旧引用以 `409 TOOL_VERSION_MISMATCH` 明确失败，不会把旧语义的调用静默执行到新目标；
+版本引用由内容摘要派生，多实例之间无需共享内存快照即可判定。版本校验只是
+一致性凭证——权限撤销、工具停用与 Server 启停仍然每次调用重新判定。
 
 可选 Inspector 应绑定 `controller.getToolInspectionSource()`。执行中它返回
 `current-execution` 快照，空闲时返回 `current-registry`，避免页面把新 revision 误报成
@@ -389,8 +417,15 @@ Hook 收到的是独立深冻结数据，不能改写真实 Tool 参数。
 检查点与保留边界成对出现，`modelState` 和 `usage` 可以显式为 `null`。状态损坏或 revision
 冲突必须明确失败，不能改用另一份历史数据。
 
-`ContextManager` 是自动阈值判断、Tool 安全切分、重复摘要、模型输入投影和 usage 推进的唯一
-业务入口。正常模型响应必须提供 Provider usage；成功压缩后的字符估算只作为下一次正常响应
-前的保守过渡值。达到服务端窗口的 80% 时 Runtime 先压缩再调用模型，失败时旧上下文保持
-不变且本轮不继续。完整规则见[上下文压缩指南](../guides/context-compaction.md)和
+`ContextManager` 是自动阈值判断、Tool 安全切分、重复摘要、模型输入投影、usage 推进和
+最终窗口预算检查的唯一业务入口。正常模型响应必须提供 Provider usage；成功压缩后的字符
+估算只作为下一次正常响应前的保守过渡值。达到服务端窗口的 80% 时 Runtime 先压缩再调用
+模型，失败时旧上下文保持不变且本轮不继续。
+
+每次模型调用前，`prepareForModelCall` 对最终出站输入执行预算检查：工作消息（含 system
+指令与摘要检查点）、本轮 Tool 定义与输出预留之和不得超过“窗口 − 输出预留”。压缩成功
+不等于检查通过——压缩结果装不下窗口、首次输入过大或 Tool 目录过大时以
+`CONTEXT_WINDOW_EXCEEDED` 明确失败，完整历史保留，由用户调整输入后重新发起；不自动
+重复压缩、不静默删除历史、不更换模型。服务端摘要请求遵守同一预算（见
+[HTTP 契约](http-api.md)）。完整规则见[上下文压缩指南](../guides/context-compaction.md)和
 [ADR-004](../architecture/adr/0004-context-compaction.md)。

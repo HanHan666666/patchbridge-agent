@@ -14,6 +14,7 @@
 | `docs/reference/` | 查字段和契约的人 | 配置、API、错误码、公共类型和默认值 | 教学流程和方案讨论 |
 | `docs/architecture/overview.md` | 架构师和贡献者 | 当前模块关系、责任、不变量与扩展边界 | 实时进度和历史审计 |
 | `docs/architecture/designs/` | 实现者和审查者 | 一项已接受或待实施设计的完整方案 | 替代路线图状态 |
+| `docs/architecture/reviews/` | 维护者和架构审查者 | 固定代码基线的愿景对照、问题证据、影响与修正建议 | 当前整改进度、未经接受的新架构决策或发布认证 |
 | `docs/architecture/adr/` | 架构维护者 | 已决策问题的背景、决策、代价和替代方案 | 使用教程 |
 | `docs/research/` | 决策者和 Provider 实现者 | 调研问题、事实来源、结论和对项目的影响 | 声称未落地能力已经实现 |
 | `docs/releases/` | 发布者和版本使用者 | 固定版本的说明、门禁、审计和证据 | 当前路线图 |
@@ -27,6 +28,7 @@
 - 当前完成度、下一阶段、暂缓范围：`docs/roadmap.md`
 - 当前总体架构和模块责任：`docs/architecture/overview.md`
 - 架构决策原因：Accepted ADR
+- 架构审查事实与复现证据：`docs/architecture/reviews/` 中注明基线的审查报告；问题当前状态仍只在路线图维护
 - 首次运行命令：`QUICKSTART.md`
 - 某项功能的操作步骤：对应 `docs/guides/*.md`
 - 完整配置项和默认值：`docs/reference/configuration.md`
@@ -54,6 +56,11 @@
 | --- | --- |
 | `Agent Runtime` | Agent 执行运行时 |
 | `ModelState` | 模型续接状态 |
+| `ModelTarget` | 一个可执行的模型协议、endpoint、上游模型、能力、窗口与服务端凭据组合 |
+| `ModelTargetRef` | 会话和模型调用使用的 `targetId + routingRevision` 不可变引用 |
+| `ModelProviderRouter` | 按 ModelTarget 解析配置并选择协议 Adapter 的统一模型出站入口 |
+| `ModelAccessContext` | 由可信服务端入口构造、区分已认证 HTTP 用户与可信 JVM 调用的模型授权上下文 |
+| `Model Handoff` | 用户显式切换会话当前 ModelTarget 的原子转移；不翻译 Provider 私有状态 |
 | `ModelContext` | 与完整聊天历史分离的模型工作上下文 |
 | `ContextManager` | Browser 上下文压缩与模型输入投影的统一入口 |
 | `ContentBlock` | 结构化内容块 |
@@ -140,6 +147,32 @@
 ## 被拒绝的方案
 ## 验收或约束
 ```
+
+### Architecture Review
+
+```markdown
+# 架构审查标题
+
+- 文档类型：Architecture Review
+- 审查日期：YYYY-MM-DD
+- 代码与文档基线：...
+- 结论属性：事实 / 建议；是否形成已接受决策
+- 实施状态：链接路线图中的问题条目
+
+## 审查结论
+## 判断依据与范围
+## 已成立的架构边界
+## 问题、源码证据与复现结果
+## 影响、修正方向与建议验收条件
+## 待评审的产品取舍
+## 验证记录与未验证范围
+## 相关文档
+```
+
+审查必须区分源码事实、最小复现、影响推论和方向建议。问题使用稳定编号关联路线图，
+不在报告中维护第二份整改勾选表；后续修复不能倒写原基线的观察结果。新的方向只有完成
+相应决策程序后才成为当前架构，不因写入报告而自动 Accepted。首份示例见
+[《项目愿景、实现一致性与方向修正审查》](../architecture/reviews/vision-and-implementation.md)。
 
 ### Research
 

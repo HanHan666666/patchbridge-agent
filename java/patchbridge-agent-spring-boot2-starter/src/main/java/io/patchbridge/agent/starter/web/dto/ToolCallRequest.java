@@ -18,6 +18,12 @@ public class ToolCallRequest {
     /** 目标 Tool 名称。 */
     private String name;
 
+    /**
+     * 发现时取得的定义/路由版本引用；静态 Tool 为 null。
+     * 服务端用它确认“模型看到的定义”与“本次实际路由的目标”仍然一致。
+     */
+    private String version;
+
     /** 业务参数；必须显式提供 JSON 对象，即使无参数也应传 {}。 */
     private Map<String, Object> arguments;
 
@@ -41,6 +47,12 @@ public class ToolCallRequest {
 
     /** 设置目标 Tool 名称。 */
     public void setName(String name) { this.name = name; }
+
+    /** 返回定义/路由版本引用；静态 Tool 为 null。 */
+    public String getVersion() { return version; }
+
+    /** 设置定义/路由版本引用；由 Browser 从工具发现结果原样回传。 */
+    public void setVersion(String version) { this.version = version; }
 
     /** 返回业务参数对象。 */
     public Map<String, Object> getArguments() { return arguments; }

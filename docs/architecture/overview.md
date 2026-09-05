@@ -4,6 +4,12 @@
 - 适用范围：Browser Agent Runtime、Java Core、Spring Boot Starter、Model、Tool、MCP、Conversation、上下文压缩、Widget 与调试视图
 - 核心目标：后端无 Agent Runtime 状态；对宿主前后端代码保持最小侵入
 
+> 2026-09-05 实现核对：本文的不变量仍是架构约束。审查确认的后端动态 Tool 版本一致性、
+> 首轮保存快照、取消后继续、Java Tool 异常分类和压缩后预算检查五项缺口已于同日修复
+> 并补齐回归（VA-01～VA-05，实现与验证记录见[路线图](../roadmap.md)）；真实外部协议与
+> 宿主环境仍需按后续里程碑验证。详见
+> [愿景与实现审查](reviews/vision-and-implementation.md)。
+
 ## 设计结论
 
 PatchBridge Agent 采用的总体架构是：
@@ -260,12 +266,12 @@ ConversationContext
 摘要检查点和近期真实消息的投影。二者必须使用同一个 revision、同一个事务保存和读取。
 Repository 不提供分别保存消息与工作上下文的方法，避免产生新版消息搭配旧版模型状态的撕裂快照。
 
-用户显式重置会话连续状态时，Repository 在 owner 范围和 `expectedRevision` 下原子
-保留消息、将 `modelContext.modelState` 设为 `null`、推进 revision 并返回完整快照。即使状态
-原本已空也要推进 revision，使迟到 Execution 或其他 Tab 的旧保存明确冲突。
-该操作不选择 Provider；按会话 Provider 路由如果产生真实需求，将通过独立
-`ModelTarget` 与 Router 设计，不塞入 `ModelState`。详见
-[ADR-002](adr/0002-model-state-lifecycle.md)。
+显式会话连续状态重置属于 [ADR-002](adr/0002-model-state-lifecycle.md) 已接受、尚待实施的
+操作，当前没有对应的重置入口。计划契约要求 Repository 在 owner 范围和
+`expectedRevision` 下原子保留消息、将 `modelContext.modelState` 设为 `null`、推进 revision
+并返回完整快照；即使状态原本已空也推进 revision，使迟到 Execution 或其他 Tab 的旧保存
+明确冲突。该操作不选择 Provider。按会话路由另见 Proposed
+[ADR-005](adr/0005-model-target-routing-and-switching.md)，实施状态均以[路线图](../roadmap.md)为准。
 
 上下文压缩不属于显式状态重置。`DefaultContextManager` 负责 80% 阈值、安全消息段、重复
 摘要和模型输入投影；Server 用当前模型生成摘要，并通过当前 Provider 的

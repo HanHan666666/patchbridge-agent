@@ -45,6 +45,17 @@ public final class ToolDefinition {
     private final List<String> permissions;
 
     /**
+     * 服务端认可的定义/路由版本引用；动态来源（如 MCP）每次发布定义时计算，
+     * 静态来源（如启动期 @AiTool）为 {@code null}。
+     *
+     * <p>该引用随发现结果下发给浏览器，并在调用时原样回传：Server 据此确认
+     * “模型看到的定义”与“本次实际路由的目标”仍然一致，定义或路由发生语义变化后
+     * 旧引用明确失败，而不是静默执行新目标。它只是一致性凭证，不能替代
+     * 每次调用的权限检查与启停状态检查。
+     */
+    private final String version;
+
+    /**
      * 创建不可变 Tool 定义。
      *
      * @param name 带命名空间的全局名称
@@ -54,10 +65,11 @@ public final class ToolDefinition {
      * @param annotations 行为元数据
      * @param source Tool 来源
      * @param permissions 宿主业务权限标识集合
+     * @param version 定义/路由版本引用；静态来源传 {@code null}
      */
     public ToolDefinition(String name, String title, String description,
                           Map<String, Object> inputSchema, ToolAnnotations annotations,
-                          ToolSource source, List<String> permissions) {
+                          ToolSource source, List<String> permissions, String version) {
         this.name = name;
         this.title = title;
         this.description = description;
@@ -72,6 +84,7 @@ public final class ToolDefinition {
             throw new IllegalArgumentException("permissions 不能为空，请显式传入空列表");
         }
         this.permissions = Collections.unmodifiableList(new ArrayList<String>(permissions));
+        this.version = version;
     }
 
     /** 命名空间全名，全局唯一。 */
@@ -109,6 +122,15 @@ public final class ToolDefinition {
      */
     public List<String> getPermissions() {
         return permissions;
+    }
+
+    /**
+     * 返回定义/路由版本引用；静态来源为 {@code null}。
+     *
+     * <p>调用方必须把发现时取得的版本原样回传，Server 在调用时校验一致性。
+     */
+    public String getVersion() {
+        return version;
     }
 
     /**

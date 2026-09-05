@@ -37,6 +37,7 @@ export function testContextManager(): ContextManager {
     contextWindowTokens: 128_000,
     automaticThresholdTokens: 102_400,
     keepRecentTokens: 20_000,
+    reservedOutputTokens: 12_800,
   });
   return {
     loadConfiguration: async () => configuration,

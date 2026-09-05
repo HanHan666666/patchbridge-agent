@@ -54,7 +54,9 @@
 ## Architecture、ADR 与 Research
 
 - [架构总览](architecture/overview.md)
+- [项目愿景、实现一致性与方向修正审查](architecture/reviews/vision-and-implementation.md)：2026-09-05 的愿景对照、五处已复现缺口、修正验收条件与 R1.8 顺序建议；整改状态以路线图为准。
 - [架构决策记录（ADR）](architecture/adr/README.md)
+- [可管理模型目标、按会话路由与显式切换技术方案](architecture/designs/model-target-registry-and-switching.md)：R1.8 待讨论方案，不代表当前已经支持后台模型配置或会话切换。
 - [调研：思考模型 reasoning_content 回传规则](research/reasoning-content.md)
 
 ## Roadmap 与 Release
@@ -80,7 +82,9 @@
 
 ## 当前能力总览
 
-下表是 v0.1 当前已完成并可通过 Demo 或底层验证观察的能力摘要：
+下表是 v0.1 已有实现并可通过 Demo 或底层验证观察的能力摘要。2026-09-05 审查发现的
+Tool 路由、会话保存、取消后继续、异常分类与压缩预算缺口见
+[审查报告](architecture/reviews/vision-and-implementation.md)，当前完成状态以[路线图](roadmap.md)为准：
 
 | 能力 | 设计目的 | Demo 入口 |
 | --- | --- | --- |
@@ -110,6 +114,8 @@
 - [ADR-002：ModelState 生命周期所有权与显式会话连续状态重置](architecture/adr/0002-model-state-lifecycle.md)
 - [ADR-003：Browser Agent Runtime 生产级执行守卫](architecture/adr/0003-browser-runtime-guards.md)
 - [ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](architecture/adr/0004-context-compaction.md)
+- [ADR-005（Proposed）：可管理 ModelTarget、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
+- [可管理模型目标、按会话路由与显式切换技术方案](architecture/designs/model-target-registry-and-switching.md)
 - [Java 后端单次模型调用 API 设计](architecture/designs/java-model-gateway.md)
 - [v0.1 公开契约与安全默认值审计](releases/v0.1/audits/public-contract-and-security.md)
 - [Headless Browser README](../web/packages/agent/README.md)

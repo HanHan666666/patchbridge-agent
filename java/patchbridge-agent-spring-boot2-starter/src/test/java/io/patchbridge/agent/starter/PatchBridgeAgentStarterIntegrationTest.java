@@ -172,6 +172,23 @@ class PatchBridgeAgentStarterIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * VA-01：本地 Tool 版本引用为 null，携带过期引用的调用必须以稳定 409 拒绝，
+     * 保证“模型看到的定义”与“实际执行的目标”不一致时不放行旧调用。
+     */
+    @Test
+    void staleToolVersionReferenceRejectedWithConflict() throws Exception {
+        login("ai:chat:use");
+        mockMvc.perform(
+                        post("/ai/tools/call")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"name\":\"local.echo\",\"version\":\"stale-v1\","
+                                            + "\"arguments\":{\"text\":\"hello\"}}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("TOOL_VERSION_MISMATCH"));
+    }
+
     /** Tool 调用是严格契约：未知字段代表前后端版本错配，必须 400。 */
     @Test
     void toolCallUnknownFieldRejected() throws Exception {

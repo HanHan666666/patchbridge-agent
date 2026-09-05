@@ -8,10 +8,10 @@
 
 | 方法和路径 | 成功状态 | 说明 |
 | --- | ---: | --- |
-| <code>GET /ai/tools</code> | 200 | 当前用户可发现 Tool |
-| <code>POST /ai/tools/call</code> | 200 | 每次重新授权；业务 isError 仍可为 200 |
+| <code>GET /ai/tools</code> | 200 | 当前用户可发现 Tool，含定义/路由版本引用 |
+| <code>POST /ai/tools/call</code> | 200 | 每次重新授权；业务 isError 仍可为 200；版本引用必须与当前定义一致 |
 | <code>POST /ai/model/stream</code> | 200 SSE | 结构化模型流 |
-| <code>GET /ai/model/config</code> | 200 | 当前模型窗口、固定 80% 自动阈值与近期保留预算 |
+| <code>GET /ai/model/config</code> | 200 | 当前模型窗口、固定 80% 自动阈值、近期保留预算与输出预留 |
 | <code>POST /ai/model/compact</code> | 200 | 用当前模型原子生成上下文摘要并投影 Provider 状态 |
 | <code>GET /ai/conversations</code> | 200 | 当前 owner 会话列表 |
 | <code>POST /ai/conversations</code> | 200 | 无 body 合法；不是 201 |
@@ -39,6 +39,7 @@ Admin Trace 日期格式为 <code>yyyy-MM-dd</code> 或 <code>yyyy-MM-dd HH:mm:s
 ~~~json
 {
   "name": "local.device_get",
+  "version": null,
   "arguments": {"serial": "device-placeholder"},
   "requestId": "request-placeholder",
   "traceId": "trace-placeholder",
@@ -48,6 +49,13 @@ Admin Trace 日期格式为 <code>yyyy-MM-dd</code> 或 <code>yyyy-MM-dd HH:mm:s
 ~~~
 
 name 和 arguments 必填；即使无参数也必须显式发送 <code>{}</code>。其他字段只用于关联，不是可信身份字段。未知顶层字段拒绝。
+
+<code>version</code> 是发现（<code>GET /ai/tools</code>）时取得并在调用时原样回传的定义/路由版本引用：
+静态 Tool（本地 @AiTool、纯前端）恒为 <code>null</code>，MCP Tool 由服务端按路由配置与定义内容
+计算确定性摘要。服务端在授权检查之前校验该引用，与当前定义不一致时返回
+<code>409 TOOL_VERSION_MISMATCH</code>，保证“模型看到的定义”与“本次实际路由的目标”来自同一代
+服务端状态；多实例之间无需共享内存快照。版本校验不能替代授权：权限撤销与工具停用仍按
+当前状态逐次判定。
 
 ### Conversation 请求
 
@@ -86,12 +94,15 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 {
   "contextWindowTokens": 128000,
   "automaticThresholdTokens": 102400,
-  "keepRecentTokens": 20000
+  "keepRecentTokens": 20000,
+  "reservedOutputTokens": 12800
 }
 ~~~
 
-三个字段都是安全正整数；自动阈值严格小于窗口，近期预算严格小于自动阈值。Browser 初始化
-时必须取得该配置，不维护另一份前端默认值。
+四个字段都是安全正整数；自动阈值严格小于窗口，近期预算严格小于自动阈值，输出预留与
+自动阈值之和严格小于窗口。`reservedOutputTokens` 是最终输入预算（窗口 − 输出预留）的
+唯一来源：Browser 的最终窗口检查与服务端摘要请求预算都使用该派生值，任何一层不得
+另行推导。Browser 初始化时必须取得该配置，不维护另一份前端默认值。
 
 ### Context compact
 
@@ -145,9 +156,11 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 }
 ~~~
 
-服务端固定使用当前模型，不接受 Browser 传模型名，不向摘要调用提供 Tool。摘要空白、意外
-`tool-use`、`max-tokens`、缺少 usage、Provider 状态投影失败或上游失败返回明确错误；不会返回
-部分检查点、重试、换模型或清空状态。Servlet 取消、断开与超时会取消同一次真实模型调用。
+服务端固定使用当前模型，不接受 Browser 传模型名，不向摘要调用提供 Tool。摘要请求本身
+遵守与普通请求相同的窗口预算：摘要输入（含淘汰前缀、保留尾部与固定指令）加输出预留
+超过窗口时在调用模型前明确失败。摘要空白、意外 `tool-use`、`max-tokens`、缺少 usage、
+预算超限、Provider 状态投影失败或上游失败返回明确错误；不会返回部分检查点、重试、
+换模型或清空状态。Servlet 取消、断开与超时会取消同一次真实模型调用。
 成功和失败均以 `COMPACTION` 类型写入现有审计入口。
 
 ### Model stream 请求

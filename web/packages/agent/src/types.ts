@@ -267,6 +267,13 @@ export interface ContextCompactionConfiguration {
   readonly automaticThresholdTokens: number;
   /** 每次压缩后保留近期真实消息的 token 预算。 */
   readonly keepRecentTokens: number;
+  /**
+   * 为模型输出预留的窗口容量。
+   * 输入预算 = contextWindowTokens − reservedOutputTokens；工作消息、system
+   * 指令与本轮 Tool 定义之和不得超过该预算。派生只发生在服务端配置层，
+   * Browser 与摘要请求都不得各自推导第二套预算。
+   */
+  readonly reservedOutputTokens: number;
 }
 
 /** View 可直接展示的上下文窗口状态；业务计算由 ContextManager 统一完成。 */
@@ -341,6 +348,13 @@ export interface ToolDefinition {
   readonly source: ToolSource;
   /** 宿主定义的完整权限元数据；ALL / ANY 组合语义由服务端策略决定。 */
   readonly permissions: readonly string[];
+  /**
+   * 服务端认可的定义/路由版本引用；静态来源（本地 @AiTool、纯前端 Tool）为 null。
+   * 调用后端 Tool 时必须原样回传：服务端据此确认“模型看到的定义”与
+   * “本次实际路由的目标”仍然一致，定义或路由发生语义变化后旧引用明确失败。
+   * 它只是一致性凭证，不能替代每次调用的权限与启停检查。
+   */
+  readonly version: string | null;
 }
 
 /** 工具调用结果（POST /ai/tools/call 的响应结构）。 */

@@ -22,6 +22,7 @@
 | 404 | <code>TOOL_FAILED</code> | Tool 不存在 |
 | 404 | <code>CONVERSATION_NOT_FOUND</code> | 当前 owner 范围找不到会话 |
 | 409 | <code>CONVERSATION_CONFLICT</code> | 会话 revision 冲突 |
+| 409 | <code>TOOL_VERSION_MISMATCH</code> | Tool 定义/路由版本引用已过期，需重新发现工具 |
 | 409 | <code>MCP_CONFIG_CONFLICT</code> | MCP 名称或 revision 冲突 |
 | 409 | <code>MCP_CONFIG_READ_ONLY</code> | properties 模式写操作 |
 | 500 | <code>TOOL_FAILED</code> | Tool 执行异常 |
@@ -39,6 +40,10 @@
   Browser 使用 <code>INVALID_STATE</code>；摘要请求取消使用 <code>ABORTED</code>。失败不会提交检查点，
   自动路径也不会继续发送可能溢出的原模型请求。
 - Browser Runtime 还会产生 <code>AGENT_MAX_MODEL_CALLS</code>、<code>AGENT_MAX_TOOL_CALLS</code>、<code>AGENT_EXECUTION_TIMEOUT</code>、<code>MODEL_OUTPUT_LIMIT_EXCEEDED</code> 和 <code>TOOL_RESULT_LIMIT_EXCEEDED</code>，五者都是不自动重试的明确终止。
+- 压缩后的最终输入（工作消息、system 指令与本轮 Tool 定义）或摘要请求超过
+  “窗口 − 输出预留”预算时，Browser Runtime 产生 <code>CONTEXT_WINDOW_EXCEEDED</code>：
+  终止本次请求、保留完整历史，由用户调整输入后重新发起；不自动重复压缩、
+  不静默删除历史、不更换模型。
 
 ---
 
@@ -54,6 +59,7 @@
 | `AGENT_EXECUTION_TIMEOUT` | 整体 Execution 超过 `maxDurationMs` |
 | `MODEL_OUTPUT_LIMIT_EXCEEDED` | 单次模型调用聚合字符超限 |
 | `TOOL_RESULT_LIMIT_EXCEEDED` | Tool 结果文本超限 |
+| `CONTEXT_WINDOW_EXCEEDED` | 压缩后输入或首次输入超过最终窗口预算 |
 | `INVALID_STATE` | 缺少必需模型 usage、压缩边界或严格上下文配置/响应不成立 |
 
 上述错误均为 `retryable: false`。是否重新发起一次新 Execution 由用户或宿主决定，框架不自动重试。

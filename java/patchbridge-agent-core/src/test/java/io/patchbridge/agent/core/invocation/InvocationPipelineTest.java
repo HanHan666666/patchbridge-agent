@@ -51,6 +51,7 @@ class InvocationPipelineTest {
         ToolCallResult result =
                 pipeline.invoke(
                         "local.echo",
+                        null,
                         Collections.<String, Object>singletonMap("text", "hello"),
                         context);
 
@@ -83,6 +84,7 @@ class InvocationPipelineTest {
                         () ->
                                 pipeline.invoke(
                                         "local.echo",
+                                        null,
                                         Collections.<String, Object>emptyMap(),
                                         context));
 
@@ -332,7 +334,8 @@ class InvocationPipelineTest {
                         Collections.<String, Object>emptyMap(),
                         new ToolAnnotations(true, false, true, false),
                         ToolSource.LOCAL,
-                        Collections.<String>emptyList());
+                        Collections.<String>emptyList(),
+                        null);
         private ToolExecutionException failure;
 
         /** 创建记录 Registry 调用事件的假实现。 */
@@ -355,7 +358,8 @@ class InvocationPipelineTest {
         /** 记录调用并返回结果或抛出测试预设失败。 */
         @Override
         public ToolCallResult call(
-                String fullName, Map<String, Object> arguments, AiRequestContext requestContext)
+                String fullName, String definitionVersion, Map<String, Object> arguments,
+                AiRequestContext requestContext)
                 throws ToolExecutionException, ToolAccessDeniedException {
             events.add("registry");
             if (failure != null) {

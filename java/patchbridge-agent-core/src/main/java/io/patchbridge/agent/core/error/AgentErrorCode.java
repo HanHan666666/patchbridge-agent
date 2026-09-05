@@ -22,6 +22,12 @@ public final class AgentErrorCode {
     /** Tool 执行失败（业务异常或参数绑定失败）。 */
     public static final String TOOL_FAILED = "TOOL_FAILED";
 
+    /**
+     * Tool 定义/路由版本引用已过期（配置或定义发生语义变化）。
+     * 浏览器应重新发现工具后以新版本重试，而不是原样重放旧调用。
+     */
+    public static final String TOOL_VERSION_MISMATCH = "TOOL_VERSION_MISMATCH";
+
     /** 模型网关失败（上游不可达、认证失败、流中断）。 */
     public static final String MODEL_FAILED = "MODEL_FAILED";
 

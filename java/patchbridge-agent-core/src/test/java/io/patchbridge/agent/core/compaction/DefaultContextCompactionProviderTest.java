@@ -51,7 +51,7 @@ class DefaultContextCompactionProviderTest {
         RecordingProjector projector = new RecordingProjector();
         ContextCompactionRequest request = request(true, "上一份摘要");
         DefaultContextCompactionProvider provider =
-                new DefaultContextCompactionProvider(gateway, projector);
+                new DefaultContextCompactionProvider(gateway, projector, testSettings());
 
         ContextCompactionResult result =
                 provider.compact(request, context()).result().toCompletableFuture().join();
@@ -109,7 +109,8 @@ class DefaultContextCompactionProviderTest {
                                 ModelStopReason.END_TURN,
                                 new ModelUsage(80L, 20L, 100L))));
         DefaultContextCompactionProvider provider =
-                new DefaultContextCompactionProvider(gateway, new RecordingProjector());
+                new DefaultContextCompactionProvider(
+                        gateway, new RecordingProjector(), testSettings());
 
         provider.compact(request, context()).result().toCompletableFuture().join();
 
@@ -136,7 +137,7 @@ class DefaultContextCompactionProviderTest {
                         new RecordingGateway(
                                 new ImmediateInvocation(
                                         response("摘要", ModelStopReason.END_TURN, null))),
-                        projector);
+                        projector, testSettings());
 
         CompletionException failure =
                 assertThrows(
@@ -161,7 +162,7 @@ class DefaultContextCompactionProviderTest {
                                                 "部分摘要",
                                                 ModelStopReason.MAX_TOKENS,
                                                 new ModelUsage(80L, 20L, 100L)))),
-                        projector);
+                        projector, testSettings());
 
         CompletionException failure =
                 assertThrows(
@@ -179,7 +180,8 @@ class DefaultContextCompactionProviderTest {
         PendingInvocation invocation = new PendingInvocation();
         DefaultContextCompactionProvider provider =
                 new DefaultContextCompactionProvider(
-                        new RecordingGateway(invocation), new RecordingProjector());
+                        new RecordingGateway(invocation), new RecordingProjector(),
+                        testSettings());
         ContextCompactionInvocation compaction = provider.compact(request(false, null), context());
 
         compaction.cancel();
@@ -187,6 +189,49 @@ class DefaultContextCompactionProviderTest {
 
         assertEquals(1, invocation.cancellations.get());
         assertFalse(compaction.result().toCompletableFuture().isDone());
+    }
+
+    /** VA-05：摘要请求超过窗口预算时在调用模型前明确失败，且不产生任何状态投影。 */
+    @Test
+    void summaryRequestOverBudgetFailsBeforeModelCall() {
+        RecordingProjector projector = new RecordingProjector();
+        RecordingGateway gateway = new RecordingGateway(
+                new ImmediateInvocation(
+                        response("不应到达", ModelStopReason.END_TURN,
+                                new ModelUsage(80L, 20L, 100L))));
+        // 小窗口：阈值 800、预留 100 → 摘要输入预算 900。
+        ContextCompactionSettings settings =
+                new ContextCompactionSettings(1_000, 400, 100);
+        DefaultContextCompactionProvider provider =
+                new DefaultContextCompactionProvider(gateway, projector, settings);
+        List<AgentMessage> summarized = Arrays.asList(
+                text("user-old", MessageRole.USER, "旧问题".repeat(600)),
+                text("assistant-old", MessageRole.ASSISTANT, "旧答案"));
+        ContextCompactionRequest request = new ContextCompactionRequest(
+                ContextCompactionTrigger.AUTOMATIC,
+                summarized,
+                Collections.<AgentMessage>singletonList(
+                        text("user-recent", MessageRole.USER, "近期问题")),
+                null,
+                null,
+                "summary-over-budget",
+                false);
+
+        // 预算检查发生在发起模型调用之前，因此失败同步抛出，
+        // HTTP Adapter 的同步 catch 路径同样要能审计到该失败。
+        ModelGatewayException failure =
+                assertThrows(
+                        ModelGatewayException.class,
+                        () -> provider.compact(request, context()));
+
+        assertTrue(failure.getMessage().contains("窗口预算"));
+        assertNull(gateway.received.get(), "超限的摘要请求不得触达模型");
+        assertTrue(projector.messageSets.isEmpty(), "超限失败不得产生状态投影");
+    }
+
+    /** 创建大窗口测试设置，保证既有用例不受预算检查影响。 */
+    private static ContextCompactionSettings testSettings() {
+        return new ContextCompactionSettings(1_000_000);
     }
 
     /** 创建包含固定 system、淘汰前缀与 assistant 保留边界的请求。 */

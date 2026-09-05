@@ -143,14 +143,29 @@ export class BackendToolProvider implements BrowserToolProvider {
   /** 后端发现与调用必须共享同一个 Client，保证 endpoint 与认证链一致。 */
   constructor(private readonly client: ToolClient) {}
 
-  /** 把后端定义绑定到对应的 HTTP 调用器。 */
+  /**
+   * 把后端定义绑定到对应的 HTTP 调用器。
+   *
+   * <p>执行闭包绑定 load 时刻冻结的定义副本：名称与版本引用都来自发现快照，
+   * 调用时原样回传，服务端据此拒绝“旧快照执行到新目标”的过期调用；
+   * 上游复用可变对象也不会让已开始的闭包改读新值。
+   */
   async load(signal?: AbortSignal): Promise<readonly ExecutableTool[]> {
     const definitions = await this.client.list(signal);
-    return definitions.map(definition => ({
-      definition: copyDefinition(definition),
-      invoke: (arguments_, context, invokeSignal) =>
-        this.client.call(definition.name, arguments_, context, invokeSignal),
-    }));
+    return definitions.map(definition => {
+      const frozen = copyDefinition(definition);
+      return {
+        definition: frozen,
+        invoke: (arguments_, context, invokeSignal) =>
+          this.client.call(
+            frozen.name,
+            frozen.version,
+            arguments_,
+            context,
+            invokeSignal,
+          ),
+      };
+    });
   }
 }
 
@@ -388,6 +403,8 @@ function fromBrowserTool(tool: BrowserTool): ExecutableTool {
     },
     source: 'FRONTEND_LOCAL',
     permissions: [],
+    // 纯前端 Tool 由页面本地执行，不存在服务端路由，版本引用恒为 null。
+    version: null,
   };
   return {
     definition,

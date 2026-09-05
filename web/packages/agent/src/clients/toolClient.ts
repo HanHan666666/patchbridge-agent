@@ -28,11 +28,18 @@ export interface ToolClient {
   /** 当前用户可发现的工具列表（服务端已按权限过滤）。 */
   list(signal?: AbortSignal): Promise<ToolDefinition[]>;
   /**
-   * 调用一个工具。HTTP 层错误（不存在 / 无权限 / 执行异常）以 AgentError 抛出；
+   * 调用一个工具。
+   *
+   * <p>definitionVersion 必须传发现时取得的 ToolDefinition.version 原值：
+   * 服务端用它确认“模型看到的定义”与“本次实际路由的目标”仍然一致，
+   * 定义或路由发生语义变化时以 409 TOOL_VERSION_MISMATCH 明确失败。
+   *
+   * <p>HTTP 层错误（不存在 / 版本过期 / 无权限 / 执行异常）以 AgentError 抛出；
    * 工具本身的业务失败通过返回值 isError=true 表达，交由模型自行向用户解释。
    */
   call(
     name: string,
+    definitionVersion: string | null,
     arguments_: JsonObject,
     context: ToolCallContext,
     signal?: AbortSignal,
@@ -61,13 +68,18 @@ export class HttpToolClient implements ToolClient {
 
   async call(
     name: string,
+    definitionVersion: string | null,
     arguments_: JsonObject,
     context: ToolCallContext,
     signal?: AbortSignal,
   ): Promise<ToolCallResult> {
     const body = await requestJson<ToolCallResult>(
       `${this.endpoint}/tools/call`,
-      jsonInit('POST', { name, arguments: arguments_, ...context }, signal),
+      jsonInit(
+        'POST',
+        { name, version: definitionVersion, arguments: arguments_, ...context },
+        signal,
+      ),
       this.transport,
     );
     return body;

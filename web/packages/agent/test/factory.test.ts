@@ -26,6 +26,7 @@ const CONTEXT_GATEWAY: ContextCompactionGateway = {
     contextWindowTokens: 128_000,
     automaticThresholdTokens: 102_400,
     keepRecentTokens: 20_000,
+    reservedOutputTokens: 12_800,
   }),
   compact: async () => {
     throw new Error('该工厂测试不触发上下文压缩');

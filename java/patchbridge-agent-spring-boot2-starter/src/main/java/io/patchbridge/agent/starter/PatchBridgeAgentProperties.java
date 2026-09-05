@@ -93,6 +93,12 @@ public class PatchBridgeAgentProperties {
         /** 可选近期消息预算；为空时按窗口 20% 且最多 20,000 token 派生。 */
         private Integer keepRecentTokens;
 
+        /**
+         * 可选输出预留；为空时按窗口 10% 派生。
+         * 模型输入（工作消息、system 指令、Tool 定义）与输出预留之和不得超过窗口。
+         */
+        private Integer reservedOutputTokens;
+
         /** 建连超时；0 明确表示不设上限。 */
         private int connectTimeoutMs = 10000;
 
@@ -139,6 +145,18 @@ public class PatchBridgeAgentProperties {
                         "patchbridge-agent.model.keep-recent-tokens 必须大于 0");
             }
             this.keepRecentTokens = keepRecentTokens;
+        }
+
+        /** 返回可选的输出预留 token 数。 */
+        public Integer getReservedOutputTokens() { return reservedOutputTokens; }
+
+        /** 显式覆盖值必须为正；与窗口/阈值的关系在统一 Settings 构造期校验。 */
+        public void setReservedOutputTokens(Integer reservedOutputTokens) {
+            if (reservedOutputTokens == null || reservedOutputTokens.intValue() <= 0) {
+                throw new IllegalArgumentException(
+                        "patchbridge-agent.model.reserved-output-tokens 必须大于 0");
+            }
+            this.reservedOutputTokens = reservedOutputTokens;
         }
 
         /** 返回建连超时毫秒数。 */

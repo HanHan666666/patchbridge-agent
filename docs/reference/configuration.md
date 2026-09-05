@@ -15,6 +15,7 @@
 | <code>model.model</code> | 无 | 默认 Provider 必填、不可空白 |
 | <code>model.context-window-tokens</code> | 无 | 必填安全正整数；当前模型上下文窗口。自动压缩阈值固定派生为窗口的 80%，框架不按模型名猜测 |
 | <code>model.keep-recent-tokens</code> | <code>min(20000, floor(context-window-tokens × 20%))</code> | 可选安全正整数；压缩后保留近期真实消息的 token 预算，必须小于自动压缩阈值 |
+| <code>model.reserved-output-tokens</code> | <code>floor(context-window-tokens × 10%)</code> | 可选安全正整数；为模型输出预留的窗口容量，与 80% 阈值之和必须小于窗口 |
 | <code>model.connect-timeout-ms</code> | <code>10000</code> | 大于等于 0；0 表示无限 |
 | <code>model.read-timeout-ms</code> | <code>300000</code> | 大于等于 0；0 表示无限 |
 | <code>conversations.list-limit</code> | <code>50</code> | 必须大于 0 |
@@ -38,12 +39,18 @@
 ~~~text
 automaticThresholdTokens = floor(contextWindowTokens × 0.80)
 keepRecentTokens          = min(20_000, floor(contextWindowTokens × 0.20))
+reservedOutputTokens      = floor(contextWindowTokens × 0.10)
 ~~~
 
 自动阈值不开放配置，避免不同 Browser 使用不同触发点。128,000 token 窗口对应 102,400
-自动阈值和默认 20,000 近期预算；32,000 token 窗口对应 25,600 阈值和 6,400 近期预算。
-如果显式设置 `model.keep-recent-tokens`，该值必须大于 0 且小于自动阈值，非法配置在
-`ContextCompactionSettings` 构造阶段失败。
+自动阈值、默认 20,000 近期预算与 12,800 输出预留；32,000 token 窗口对应 25,600 阈值、
+6,400 近期预算与 3,200 输出预留。如果显式设置 `model.keep-recent-tokens`，该值必须大于 0
+且小于自动阈值；如果显式设置 `model.reserved-output-tokens`，该值必须大于 0 且与自动阈值
+之和小于窗口，非法配置在 `ContextCompactionSettings` 构造阶段失败。
+
+输出预留是模型输入最终预算（窗口 − 输出预留）的唯一派生来源：Browser 的最终窗口检查
+（工作消息、system 指令、本轮 Tool 定义）与服务端摘要请求预算都使用它，
+任何一层不得另行推导。
 
 ~~~yaml
 patchbridge-agent:

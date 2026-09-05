@@ -1,8 +1,8 @@
 # 路线图与当前进度
 
 - 文档状态：项目进度的唯一可信来源（Single Source of Truth）
-- 最近更新：2026-08-28
-- 当前里程碑：R1.7“上下文压缩”已完成；R2 Anthropic Provider 与 R3 Responses HTTP Provider 继续保持暂缓；R0 rc.2 候选 `f4c7be4` 已预检落档并冻结 tag `v0.1.0-rc.2`
+- 最近更新：2026-09-05
+- 当前里程碑：VA-01～VA-05 五项跨层缺口已完成修复并通过组合回归（同日审查登记、同日修复）；R1.8“可管理模型目标、按会话路由与显式切换”和 ADR-005 仍为 Proposed、待确认且未实施，管理面与新协议验证的依赖顺序需结合审查建议评审；R2/R3 保持暂缓；R0 rc.2 候选 `f4c7be4` 的历史预检和 tag `v0.1.0-rc.2` 保留
 - 当前发布状态：Pre-release 源码候选；尚未发布 Maven Central 或 npm 公共包
 
 本文只回答三个问题：**已经实现了什么、接下来做什么、哪些事情当前不做**。
@@ -30,18 +30,19 @@
 
 ## 总体进度快照
 
-以下比例是为了帮助判断项目阶段的**规划估算**，不是测试覆盖率，也不是发布承诺：
+以下是实施阶段摘要。历史候选的验收与当前发现的补项分别记录；本轮不以新百分比代替
+逐项验收，保留的长期愿景比例只是原规划估算：
 
 | 范围 | 当前估算 | 说明 |
 | --- | --- | --- |
-| 近期确认的能力组合 | 100% | WebMCP、Inspector、样式扩展、纯前端 Tool、Global MCP、Call Trace、Java 单次模型调用、R1.5 Runtime 生产级加固与 R1.7 上下文压缩均已完成 |
-| v0.1 核心功能 | 100% | 核心链路及二次代码质量审计整改已完成，rc.2 已冻结；后续里程碑属于新增能力 |
-| v0.1 源码开源准备 | 100% | Java/Web/Bundle/归档/安全扫描与真实模型预检已完成并绑定 rc.2 候选 |
-| 原始长期愿景 | 约 70% | 模型厂商扩展、既有 API 自动适配、公共包发布和部分生态能力尚未实现 |
+| 近期确认的能力组合 | 已有主干，审查补项已修复 | WebMCP、Inspector、前端 Tool、Global MCP、Call Trace 与 Java 单次模型调用已有实现；R1.5/R1.7 的 VA-01～VA-05 缺口已修复并补齐回归；R1.8 仍为 Proposed |
+| v0.1 核心功能 | 部分完成，当前缺口已修复 | 保留既有核心链路与历史验收；2026-09-05 登记的五项问题已完成修复、测试与契约同步，不能以整体 100% 代表真实宿主与跨协议验证状态 |
+| v0.1 源码开源准备 | 100%（仅 rc.2 历史候选） | Java/Web/Bundle/归档/安全扫描与真实模型预检已完成并绑定 rc.2；不代表当前源码的新问题已关闭 |
+| 原始长期愿景 | 原规划约 70%，本轮未重估 | 模型厂商扩展、既有 API 自动适配、公共包发布和部分生态能力尚未实现；真实宿主接入与跨协议验证仍需提供证据 |
 
-当前判断不是“Agent Runtime 还只有一个原型”。Browser Runtime、Java Ports、Provider
-边界、持久化上下文和统一 Tool 调度已经形成完整主干；项目已经从架构验证阶段进入
-**开源产品化收口阶段**。
+Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Tool 调度已经形成实际主干。
+当前优先复核的是跨层一致性与真实接入成本；已有测试通过不能替代这些边界的验收。
+证据与方向建议见[《项目愿景、实现一致性与方向修正审查》](architecture/reviews/vision-and-implementation.md)。
 
 ## v0.1 能力状态
 
@@ -54,10 +55,10 @@
 | ✅ | `Message + ContentBlock` | 统一表达 text、image、reasoning、tool-call、tool-result，不把模型状态压成字符串 |
 | ✅ | `ModelState` 与展示消息分离 | 厂商续推状态按显式 format/data 保存，Browser 不理解厂商字段 |
 | ✅ | 完整历史与模型工作上下文分离 | `messages` 永远完整可见；`modelContext` 独立保存检查点、保留边界、Provider 状态和计量 |
-| ✅ | 上下文压缩 | 必需模型窗口配置、固定 80% 自动触发、当前模型摘要、默认 `min(20k, 20%)` 近期保留、手动入口与失败原子性已完成，见 [ADR-004](architecture/adr/0004-context-compaction.md) |
+| ✅ | 上下文压缩 | 阈值触发、摘要、状态投影与手动入口已有实现；VA-05 已修复——压缩后与首次输入执行最终窗口预算检查（含 Tool 定义与输出预留），摘要请求遵守同一预算，超限明确失败并保留完整历史（见审查补项与 [ADR-004](architecture/adr/0004-context-compaction.md)；估算边界对真实模型的验证属后续范围） |
 | ✅ | 结构化 Model Stream | Browser 只接收 block/message/error 事件；Provider 独占厂商 wire protocol |
 | ✅ | 有界 `AgentExecution` | 模型次数、Tool 次数、整轮 Deadline、模型聚合内容和单个 Tool 结果均有明确上限；框架默认模型预算为 16，Demo 显式使用 30；取消/超时共用唯一终态门与迟到隔离 |
-| ✅ | Runtime 生产级执行守卫 | R1.5 的停止原因与 Tool 一致性、全批预检、五项资源上限、Outcome、迟到隔离、Tool 错误分类、共享 Provider fixture 与真实模型 `max-tokens` 验收均已完成，详见 [ADR-003](architecture/adr/0003-browser-runtime-guards.md) |
+| ✅ | Runtime 生产级执行守卫 | 停止原因、全批预检、五项限额与唯一终态已有实现；VA-03 已修复——取消/失败终态按事实补写 Tool 记录（未执行/结果未知/超限未回填），下一轮输入严格配对；VA-04 已修复——Java Tool 未知异常脱敏后终止本轮，显式 ofError 仍是业务失败 |
 | ✅ | Human-in-the-loop | Tool 可声明调用前确认，Execution 提供明确 respond/cancel 语义 |
 | ✅ | Hook / Interceptor | Runtime Hook、Model Interceptor、Tool Interceptor 均有小接口扩展点 |
 | ✅ | 显式前端状态机 | Controller 的初始化、导航、执行、确认、保存和错误均通过事件归约 |
@@ -74,7 +75,7 @@
 | ✅ | Spring Boot 2 Starter | 提供显式端点和默认装配，不注册会污染宿主的全局异常处理 |
 | ✅ | `@AiTool / @AiParam` | 注解零 Spring 依赖；扫描支持继承、bridge method 与 JDK AOP 代理 |
 | ✅ | Tool Discovery / Call | 发现与调用都执行权限检查，可信用户/租户上下文不来自模型参数 |
-| ✅ | Conversation Context | 完整 `messages + modelContext` 使用同一 revision 和事务原子保存、恢复；当前唯一 Schema 为 `model_context_json` |
+| ✅ | Conversation Context | JDBC 以同一 revision/事务保存完整 Context；VA-02 已修复——首轮持久化在首个异步操作前固定完整保存命令，写请求前检查执行归属，导航/释放/新会话不再混用或迟到提交 |
 | ✅ | 会话 Owner 隔离 | 默认使用全局唯一 `userId`；多租户宿主必须覆盖 `ConversationOwnerResolver` 生成包含租户与用户维度的 owner key，所有 JDBC 读写均以 owner 约束 |
 | ✅ | Audit / Trace 基础能力 | Audit SPI、脱敏、持久化和只读调用链查看已经打通 |
 | ✅ | OpenAI-compatible Chat Provider | OkHttp 与可选 WebFlux Adapter 均保持异步流和取消语义 |
@@ -85,7 +86,7 @@
 | 状态 | 能力 | 当前实现边界 |
 | --- | --- | --- |
 | ✅ | Unified Tool Registry | 后端原生、MCP、纯前端和 WebMCP Tool 进入同一目录，重名明确失败 |
-| ✅ | 本轮不可变 Tool 快照 | 模型看到的定义、真正执行的路由和 Inspector 展示使用同一 revision |
+| ✅ | 本轮不可变 Tool 快照 | Browser 定义、执行闭包与 Inspector 固定同一快照；VA-01 已修复——后端动态 Tool 携带定义/路由版本引用（MCP 为内容确定性摘要，多实例一致），发现与调用贯穿校验，过期引用 409 明确失败，权限/停用仍逐次判定 |
 | ✅ | 纯前端声明 Tool | 注册、快照与 Browser 执行已完成；`inputSchema` 在统一执行边界强制校验（注册期拒绝子集外关键字） |
 | ✅ | WebMCP Adapter | `document.modelContext` 通过独立 Adapter 接入，不污染 Agent Core |
 | ✅ | Global MCP 反向代理 | Global/Streamable HTTP/Tools 已实现；JSON-RPC 信封（版本/id/互斥）与结果结构（tools/content 必填）严格校验，违约即失败不降级 |
@@ -123,8 +124,9 @@
 | 状态 | 方向 | 已有基础 | 明确缺口 |
 | --- | --- | --- | --- |
 | 🟡 | 既有 API 低侵入转 Tool | 纯前端 Tool 可直接复用已有 HTTP API；Core 预留 `OPENAPI` source | 后端 `@AiExpose`、OpenAPI/springdoc 显式 allowlist 转换尚未实现 |
-| 🟡 | 多模型厂商 | Model Port、ContentBlock、ModelState 和结构化流已完成 | 当前只有 OpenAI-compatible Chat；Anthropic 与 Responses 尚无 Provider |
-| 🟡 | Admin Console | MCP 管理、Audit/Trace 查看可用 | 仍是基础管理页，不是完整运营平台 |
+| ⏳ | 模型目标管理与会话切换 | Model Port、ContentBlock、ModelState、ConversationContext、上下文压缩与 Admin/JDBC 配置模式已完成 | R1.8 设计与 ADR-005 为 Proposed；ModelTarget Store/Catalog/Router、会话 target、handoff、Admin/Widget/Demo 均未实现 |
+| 🟡 | 多模型厂商 | Provider 协议边界和 OpenAI-compatible Chat 已完成；R1.8 规划统一 Router | 当前没有 Target Router；Anthropic 与 Responses Adapter 尚未实现，不能声称任意 API 已接入 |
+| 🟡 | Admin Console | MCP 管理、Audit/Trace 查看可用 | 模型 Target 管理属于 R1.8 待实现；仍不是完整运营平台 |
 | 🟡 | 可观测性 | Audit、traceId/requestId/toolCallId 与 Hook 已具备 | 尚未提供 OpenTelemetry Adapter |
 | 🟡 | Tool Policy | 权限、HITL、Interceptor 和默认不重试已具备 | 没有内置 Rate Limit Policy；应通过显式 Adapter/Interceptor 扩展 |
 | 🟡 | MCP 生态 | 外部 MCP Tools 导入与 Global 管理已完成 | 尚未把 `@AiTool` 导出为 MCP Server，也没有 Resources/Prompts 等能力 |
@@ -133,6 +135,40 @@
 
 路线按“先把当前产品做完整，再扩大协议和生态面”的原则推进。后一个里程碑不会因为已有
 预留类型而被视为已经开始。
+
+### 当前审查补项 — 跨层一致性（已修复，2026-09-05 登记并于同日完成修复）
+
+审查报告记录的五项跨层缺口已全部修复。保留 Browser Agent、无后端 Agent Runtime 状态与
+宿主策略 Port 的既有方向；原始事实、复现步骤与建议设计见
+[愿景与实现审查](architecture/reviews/vision-and-implementation.md)（该文保留审查基线，不回写修复状态）。
+下表是修复状态的唯一记录。
+
+| 编号 | 状态 | 修正范围 | 关闭证据摘要 |
+| --- | --- | --- | --- |
+| VA-01 | ✅ 已修复 | 后端动态 Tool 发现与调用的版本一致性 | `ToolDefinition.version`（MCP 为路由配置+定义内容的确定性 SHA-256，多实例一致）贯穿 GET /ai/tools 与 POST /ai/tools/call；Registry 先于授权校验版本，MCP 在实际路由的 ServerState 上复核（收敛调用中配置切换竞态）；过期引用返回 409 `TOOL_VERSION_MISMATCH`；权限撤销、工具停用与 Server 启停仍逐次判定。测试：`DefaultToolRegistryTest`（版本一致/过期/免检边界）、`McpToolRegistryVersionTest`（endpoint 更新、远端 Schema 变化、凭据轮换不失效、工具下线、双实例确定性）、Starter 集成测试（HTTP 409）、Browser `toolRegistry.test.ts`（快照闭包绑定版本、HTTP body 携带 version） |
+| VA-02 | ✅ 已修复 | Controller 首轮持久化的完整快照与归属 | `persistRound` 在首个异步操作前固定完整保存命令（messages、modelContext、目标会话、revision），`create()` 返回后、写请求前检查执行归属；创建挂起期间的导航/新建空会话/释放 Controller 均不再发出写请求。测试：`controller.test.ts` 四个 VA-02 用例（导航/新会话/释放/创建失败，断言保存体与 UI 状态） |
+| VA-03 | ✅ 已修复 | 取消或失败后的工作上下文与下一轮输入 | Runtime 跟踪未闭合 Tool Call，取消/失败终态按事实补写记录：未执行（含等待确认）记“未执行”、已发出记“结果未知”并要求用户核实、结果超限记“超限未回填”；已完成调用保留真实结果。取消路径在代次仍有效时发布终态消息，Controller 先取消后作废迟到结果。测试：`runtime.test.ts` 五个 VA-03 用例（含下一轮出站消息配对契约校验）、`controller.test.ts` 端到端（确认前取消→再发送，第二次模型输入严格配对且 Tool 执行次数为零，Call Trace 校验通过） |
+| VA-04 | ✅ 已修复 | Java 注解 Tool 的未知异常分类 | `AnnotatedToolProvider` 只保留两个失败通道：显式返回 `ToolCallResult.ofError(...)` 为业务失败（继续循环）；方法抛出的任何异常脱敏为 `ToolExecutionException` 终止本轮（500 `TOOL_FAILED`，后续模型调用为零），完整详情只写服务端日志；AOP/事务经宿主代理不变。测试：`AnnotatedToolProviderTest`（未知异常脱敏终止、显式 ofError 继续、框架异常同样脱敏） |
+| VA-05 | ✅ 已修复 | 正常请求、摘要请求与压缩后的最终窗口检查 | 配置新增派生值 `reservedOutputTokens`（默认窗口 10%，可覆盖，启动期校验）；`ContextManager.compact()` 拒绝装不下的压缩结果，`prepareForModelCall` 对最终出站输入执行预算检查（工作消息 + 本轮 Tool 定义 + 输出预留 ≤ 窗口 − 输出预留；有 Provider 基线用基线，首次输入用估算）；服务端 `DefaultContextCompactionProvider` 对摘要请求执行同一预算。超限 `CONTEXT_WINDOW_EXCEEDED` 明确失败、不提交检查点、不删历史、不重试、不换模型。测试：`contextManager.test.ts` 四个 VA-05 用例、`DefaultContextCompactionProviderTest`（摘要超限调用前失败）、`ContextCompactionSettingsTest`、`contextCompactionClient.test.ts`。已知限制：UTF-8 字节上界对真实模型/图片/各协议的估算边界验证属后续范围（审查报告 §9.4 已记录） |
+
+共同验收条件：
+
+- 每项修复包含对应实现和实际职责链的回归用例；现有 Java/Web 全量测试通过只是必要条件。
+- 影响公共契约时，同步 Guide、Reference、架构/ADR、Demo 或明确的底层验证方式；涉及 Browser
+  产物时完成相应构建与 Starter Bundle 一致性校验。
+- 方案不能通过删除真实历史、伪造 Tool 结果、自动重试副作用、静默 fallback 或新增后端长期
+  Agent 状态掩盖问题。
+- 完成后逐项更新本表与受影响能力状态；本次审查的历史复现结果和 rc.2 发布证据保持原样。
+
+审查当日代码基线 `d2a787b` 的现有回归为 Java 8 **248 tests**、Web **230 tests** 全部通过；
+额外最小复现确认了上述问题。修复后（同日）回归为 Java 8 全 Reactor **262 tests**、
+Web 五包 **248 tests** 全部通过，五个 Browser workspace 构建成功，四个 Starter 内嵌
+Bundle 与源码构建产物一致；上述逐项测试即本表“关闭证据”。真实外部服务联调、真实宿主
+接入、容量压测与完整候选预检仍不属于本轮验证范围。
+
+后续顺序建议：先补齐五项边界，再验证真实存量宿主接入成本，并尽早用最小目标解析与第二种
+真实协议验证 Provider 抽象；模型 Admin/JDBC 管理根据明确需求推进。这是本次登记的评审
+建议，尚未重排或重新编号 R1.8/R2/R3/R5，也未批准新的配置来源和恢复策略。
 
 ### R0 — v0.1 源码开源收口（已完成，rc.2 已冻结）
 
@@ -225,7 +261,10 @@ Conversation/Audit/HTTP 映射污染；OkHttp 与 WebFlux 均通过 Provider →
 
 详细方案见[《Java 后端单次模型调用 API 设计》](architecture/designs/java-model-gateway.md)。
 
-### R1.5 — Browser Agent Runtime 生产级加固（已完成，2026-08-24）
+### R1.5 — Browser Agent Runtime 生产级加固（已有实现，审查补项待修复）
+
+2026-08-24 的初次验收记录保留如下。2026-09-05 新确认的 VA-03“取消后继续”与
+VA-04“Java Tool 未知异常分类”缺口已修复并补齐回归，状态见本页审查补项表。
 
 目标：不扩大 Agent 产品范围，只把已有纯前端 Agent Loop 的协议、资源和终态边界收紧为
 可验证的生产契约，然后再增加 Anthropic 和 Responses Provider。
@@ -240,7 +279,7 @@ Conversation/Audit/HTTP 映射污染；OkHttp 与 WebFlux 均通过 Provider →
 - [x] 保留 `ToolCallResult.isError` 作为模型可见业务失败，未预期 throw/rejection 改为终止 Execution；
 - [x] 固化 Java Provider 与 Browser Runtime 的统一契约验收矩阵，后续 Provider 必须通过同一套边界验证。
 
-验收结果：上述七项代码契约已落地，Java OpenAI 协议内核与 Browser `HttpModel`
+初次验收记录（2026-08-24）：上述七项当时通过验收，Java OpenAI 协议内核与 Browser `HttpModel`
 共用 `test-fixtures/model-provider-contract-v1.json` 中的标准事件序列；OkHttp/WebFlux
 保留各自的传输、取消与清理边界测试。真实 OpenAI-compatible 模型以 8-token 输出预算
 触发 `max-tokens`：Widget 在保存期间及保存完成后均保留截断提示，历史会话写入成功，
@@ -298,7 +337,11 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 `AGENTS.md`、README、QUICKSTART、包 README、发布检查清单中的旧路径引用已同步；
 `docs/` 路径已全部 ASCII 化，Markdown 本地链接检查与旧路径扫描无残留。
 
-### R1.7 — 上下文压缩（已完成，2026-08-27）
+### R1.7 — 上下文压缩（已有实现，预算补项待修复）
+
+2026-08-27 的功能实施与后续回归记录保留如下。2026-09-05 新确认的 VA-05“压缩后窗口
+检查”与 VA-02 影响的 ConversationContext 端到端保存均已修复并补齐回归，状态见本页
+审查补项表。
 
 目标：长会话达到模型窗口前，完整保留用户可见聊天历史，只把下一次 Provider 请求使用的
 工作上下文压缩为“当前模型摘要 + 近期原始消息”，并让自动与手动路径共享同一套边界。
@@ -331,7 +374,7 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 - 配置、HTTP、Browser、Runtime、错误码、架构、ADR、使用指南、Quick Start 与 Demo 验收同步；
 - Java/Web 全量测试、五个 Browser workspace 构建和四个 Starter Bundle 字节一致性通过。
 
-验收结果：Java 全 Reactor 248 tests 通过；Web 五个 workspace 共 230 tests 通过；五包构建
+此前验收记录：Java 全 Reactor 248 tests 通过；Web 五个 workspace 共 230 tests 通过；五包构建
 成功，四个生成 Bundle 与 Starter classpath 资源逐字节一致。Demo 首页的默认 Widget 已直接
 提供上下文面板和手动入口；`PatchBridgeAgentStarterIntegrationTest` 覆盖配置与压缩 HTTP
 端点，Demo API E2E 校验模型窗口与 80% 派生值，ContextManager / Provider 测试覆盖自动路径
@@ -340,9 +383,74 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 设计原因见[ADR-004](architecture/adr/0004-context-compaction.md)，接入步骤见
 [《使用上下文压缩》](guides/context-compaction.md)。
 
-### R2 — Anthropic Provider 与会话连续状态重置（暂缓）
+### R1.8 — 可管理模型目标、按会话路由与显式切换（Proposed，待确认、未实施）
+
+目标：把当前单份 `patchbridge-agent.model.*` 和单一 `ModelProvider` 装配替换为服务端可管理的
+`ModelTarget` 目录、统一 Router 和按会话 current Target；多个 OpenAI-compatible Target 先
+共享同一协议 Adapter，并为 R2/R3 新 Provider 建立不需要修改 Browser Agent Loop 的接入边界。
+
+方案状态：技术设计和 ADR-005 已完成初稿，但配置归属、旧配置迁移和跨 Provider 不兼容内容的
+处置策略仍需维护者确认。没有生产代码、公共端点、Guide/Reference 或 Demo 行为改变，不能把
+本里程碑描述为部分可用。
+
+2026-09-05 审查追加评审点：保留统一 ModelTarget/Router 的职责动机，重新评估完整
+Admin/JDBC 管理是否必须先于第二种真实协议验证；单一事实源不自动等于框架自带 JDBC。
+该建议尚未修改下列 Proposed 方案，也不代表批准多源合并、兼容或降级路径。
+
+计划范围：
+
+- [ ] 增加 `ModelTarget`、`ModelTargetRef { targetId, routingRevision }`、能力模型、record
+  revision、区分已认证 HTTP 与可信 JVM 的 `ModelAccessContext` 及 `ModelAccessPolicy`；
+- [ ] 增加 JDBC `ModelTargetStore`、AES-GCM 凭据、Admin 乐观锁、default 事务不变量和多实例
+  generation；Target 使用 record/routing 双 revision，default settings 使用独立
+  settingsRevision；配置源只保留一个，不合并、不 fallback；
+- [ ] 增加按 protocol 注册的 `ModelProtocolAdapter`、`ModelTargetCatalog` 与
+  `ModelProviderRouter`，让 Browser Model Stream、Context Compaction 和 Java
+  `ModelGateway` 共享同一目标解析；
+- [ ] 删除 `ModelRequest.model` 与 `patchbridge-agent.model.*` 单模型配置路径，不保留导入、
+  别名、双读或 JDBC 空库 fallback；
+- [ ] 将 `ConversationContext` 一次性替换为完整 `messages + modelTarget + modelContext`，使用
+  同一个 owner/revision/事务保存；
+- [ ] 实现统一 Model Handoff：完整消息和文本 checkpoint 保持不变，旧 `ModelState` 清空，按
+  ADR-004 同一 UTF-8 上界为新 Target 生成 estimated usage；目标无法原样编码当前工作上下文或
+  估算超过目标窗口时明确失败；
+- [ ] 区分多个 enabled、一个 default 和每个会话一个 current；Target 停用、修订变化或无权限
+  时不自动换 default；
+- [ ] 首轮稳定终态把 TargetRef、完整消息和 ModelContext 一次创建；普通保存不能改变 current
+  Target，取消或失败草稿不创建空 Server 会话；
+- [ ] Admin Console 增加模型 CRUD、只写凭据、disabled Target 真实测试、启停和 default；测试
+  结果不落库且不能绕过普通 Router；默认 Widget 与 Headless API 增加目录、当前模型和空闲切换；
+- [ ] Demo 使用至少两个真实 OpenAI-compatible Target 验证同协议切换；跨协议真实切换分别在
+  R2/R3 Adapter 完成后验收，不用模型名称冒充协议兼容。
+
+验收条件：
+
+- 普通 Browser 或 Java 调用无法用任意模型名绕过 Target 目录；目录、Router、压缩和会话保存
+  使用同一 TargetRef；
+- Model Stream、Compaction 和 Java Gateway 的 missing/disabled/forbidden/revision mismatch/
+  未注册协议都明确失败且调用其他 Provider 次数为零；
+- 可信 JVM 调用与已认证 HTTP 具有明确 AccessContext；匿名 HTTP 不能借无用户 Java 入口放行；
+- 配置凭据只以密文存储并且不进入响应、日志、错误与审计；KEEP/REPLACE/CLEAR、配置冲突、
+  generation 和多实例刷新均有测试；
+- 会话 handoff 在 expectedRevision 下原子提交，成功前后完整 messages 逐值相同；失败、取消或
+  冲突保持旧 Target、ModelState 和 usage；
+- disabled Target 的 Admin 测试不改变 enabled/default、不持久化结果；Catalog 故障时仍能通过
+  record revision 修复配置，但不能沿用旧 generation 路由；
+- image/Tool 历史能力矩阵有契约测试，任何不兼容都不使用占位、删除、文本降级或合成 Tool
+  Result；展示 ReasoningBlock 保留且不转正文，旧 Provider reasoning 状态随 handoff 清除；
+- 进行中的 AgentExecution 冻结一个 TargetRef，busy 状态拒绝切换；管理修订在下一次调用明确
+  失败，不在 Server 保存跨请求 Execution；
+- Admin、Widget、Headless、真实 Demo、Java/Web 全量测试、Bundle 字节一致和全部相关文档同时
+  完成后，才能标记为 ✅。
+
+详细方案见[《可管理模型目标、按会话路由与显式切换技术方案》](architecture/designs/model-target-registry-and-switching.md)，
+拟议决策见[ADR-005](architecture/adr/0005-model-target-routing-and-switching.md)。
+
+### R2 — Anthropic Provider 与独立会话连续状态重置（暂缓，依赖 R1.8）
 
 - [ ] 实现 Anthropic Messages 请求/流式事件 Adapter；
+- [ ] 作为 `anthropic-messages` 协议 Adapter 接入 R1.8 的统一 Target Catalog/Router，不新增
+  第二套 Provider 选择或配置入口；
 - [ ] 使用独立 `ModelState.format` 保留带签名 thinking block；
 - [ ] 固化 Provider 拥有的 ModelState 完整替换语义：`message-stop` 返回非空下一状态时
   替换旧值，返回 `null` 时清空；Runtime 不推测生命周期，公共 `ModelState`
@@ -351,12 +459,13 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
   清空 `modelState`、推进 revision 并返回完整快照；普通续跑的 format 不匹配或过期
   仍明确失败，不自动无状态重试（见[ADR-002](architecture/adr/0002-model-state-lifecycle.md)）；
 - [ ] 验证工具交错调用、取消、错误映射和会话恢复；
-- [ ] 增加真实配置说明与 Demo 选择入口；文档中心、对应 Guide/Reference 和 Demo 同步说明
-  显式状态重置的用法、不可恢复代价与冲突处理。
+- [ ] 在 R1.8 已有选择器中增加真实 Anthropic Target，验证 OpenAI-compatible ↔ Anthropic
+  handoff；文档中心、对应 Guide/Reference 和 Demo 同步说明显式状态重置的用法、不可恢复代价与冲突处理。
 
-### R3 — OpenAI Responses HTTP Provider（暂缓）
+### R3 — OpenAI Responses HTTP Provider（暂缓，依赖 R1.8）
 
 - [ ] 将 Responses item/event 映射为现有 ContentBlock 与结构化流；
+- [ ] 作为 `openai-responses` 协议 Adapter 接入 R1.8 的统一 Target Catalog/Router；
 - [ ] 明确 `previous_response_id`、加密 reasoning item 与无状态后端的关系；由 Provider
   返回完整下一状态或 `null`，并将上游续推失效明确映射为 `MODEL_STATE_EXPIRED`；
 - [ ] 验证 Tool Calling、续推状态、取消和错误语义；
@@ -421,8 +530,9 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 - Agent Marketplace；
 - 恢复执行到一半的 Browser Agent Runtime。
 
-MCP 用户级/租户级配置、完整 OAuth、Resources、Prompts、Tasks、Sampling、Vault/KMS 默认
-实现也不在当前版本范围；未来只有真实需求确认后才进入待实现状态。
+用户个人/租户级模型目录与自带 API Key、MCP 用户级/租户级配置、完整 OAuth、Resources、
+Prompts、Tasks、Sampling、Vault/KMS 默认实现也不在当前版本范围；未来只有真实需求确认后才
+进入待实现状态。R1.8 当前 Proposed 方案只包含全局 Admin 模型目录和按用户授权后的会话选择。
 
 ## 路线图同步约定
 
@@ -439,6 +549,9 @@ MCP 用户级/租户级配置、完整 OAuth、Resources、Prompts、Tasks、Sam
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-09-05 | 修复审查登记的 VA-01～VA-05 五项跨层缺口：后端动态 Tool 新增定义/路由版本引用并贯穿发现与调用（MCP 内容确定性摘要、双实例一致、过期引用 409 `TOOL_VERSION_MISMATCH`）；Controller 首轮持久化固定完整保存命令并在写请求前校验执行归属；Runtime 取消/失败终态按事实补写 Tool 记录（未执行/结果未知/超限未回填）并保证下一轮输入严格配对；Java 注解 Tool 异常分类收敛为显式 ofError=业务失败、抛异常=脱敏终止；上下文配置新增 `reservedOutputTokens`，Browser 最终出站输入与服务端摘要请求执行统一窗口预算检查（`CONTEXT_WINDOW_EXCEEDED` 明确失败、保留完整历史）。同步 ToolRegistry/ToolProvider/ToolInvocationPipeline 签名、HTTP 契约（tools/call version、model/config reservedOutputTokens）、错误码、Runtime 契约、配置参考、压缩/Java 工具指南、ADR-001/003/004 与架构总览；Java 8 全 Reactor 262 tests、Web 五包 248 tests、五包构建与四 Bundle 同步通过；真实协议联调、宿主接入与估算边界真实验证仍属后续范围 |
+| 2026-09-05 | 记录代码基线 `d2a787b` 的愿景与实现审查：保留 Browser Runtime/Java Port/Provider 主架构；登记 VA-01～VA-05 的动态 Tool 版本、首轮保存、取消后继续、Java 异常分类和压缩预算缺口，相关能力调整为部分完成；Java 8 248、Web 230 现有测试通过但额外复现仍确认问题；提出真实宿主接入、第二协议与模型管理面顺序建议，R1.8/ADR-005 仍为 Proposed；新增架构审查分类并同步文档中心、架构总览和 Runtime Reference，校正显式状态重置的待实施表述；只改文档，不改产品代码、Schema 或历史 rc.2 证据 |
+| 2026-08-29 | 登记 R1.8“可管理模型目标、按会话路由与显式切换”为 Proposed、待确认且未实施：基于当前单 Provider 装配、Conversation/ModelContext、上下文压缩、Admin/JDBC 配置模式及 PI 当前源码完成技术方案和 ADR-005 初稿；推荐用 `ModelTargetRef`、统一 Catalog/Router、JDBC 单一配置源和显式 handoff，区分 enabled/default/current，删除任意 `ModelRequest.model` 与旧 properties 单模型路径；切换保留完整历史和文本 checkpoint、清除私有 ModelState、不兼容内容明确失败；R2/R3 调整为接入同一 Router；本次只修改规划文档，不声称端点、UI 或运行时能力已实现 |
 | 2026-08-28 | 修复重复压缩传播陈旧任务状态：保留现有 Browser/HTTP 契约，由服务端摘要入口把 `retainedMessages` 作为只读对账上下文交给当前模型，检查点只摘要淘汰前缀，但不得把已在保留尾部完成、取消或替代的事项继续列为剩余工作；摘要调用的 Provider 私有状态同步投影到全部真实输入；新增“前缀完成 83 次、尾部完成至 100 次”回归测试，并同步 ADR、Guide、HTTP Reference；Java 248 tests、Web 230 tests、五包构建与四 Bundle 字节一致通过 |
 | 2026-08-28 | 将 Demo 单次 Execution 的 `maxModelCalls` 从局部覆盖值 8 调整为 30，框架公共默认值 16 与其他宿主契约保持不变；Demo 指南明确已完成会话使用文件型 H2 持久化、未完成 Execution 不恢复；新增静态装配契约锁定 30 次预算；Java 247 tests、Web 230 tests、五包构建与四 Bundle 字节一致通过 |
 | 2026-08-28 | 修复 Call Trace 在连续 `tool-use` 中误报 Tool 引用损坏：保留 Runtime 累计消息契约，改为一次稳定消息事件先生成全部候选轨迹、统一校验后再单次提交；非法批次不留下半更新状态；新增“模型 Tool Call → Tool Result → 模型再次 Tool Call → 最终回答”完整回归测试，并同步 Call Trace 采集契约；Java 247 tests、Web 229 tests、五包构建与四 Bundle 字节一致通过 |
@@ -477,9 +590,12 @@ MCP 用户级/租户级配置、完整 OAuth、Resources、Prompts、Tasks、Sam
 
 ## 相关文档
 
+- [项目愿景、实现一致性与方向修正审查](architecture/reviews/vision-and-implementation.md)
 - [开源文档信息架构与中文写作体系重构方案](architecture/designs/documentation-system.md)
 - [ADR-003：Browser Agent Runtime 生产级执行守卫](architecture/adr/0003-browser-runtime-guards.md)
 - [ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](architecture/adr/0004-context-compaction.md)
+- [ADR-005（Proposed）：可管理 ModelTarget、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
+- [可管理模型目标、按会话路由与显式切换技术方案](architecture/designs/model-target-registry-and-switching.md)
 - [使用上下文压缩](guides/context-compaction.md)
 - [Java 后端单次模型调用 API 设计](architecture/designs/java-model-gateway.md)
 - [v0.1 源码发布收口代码质量审计](releases/v0.1/audits/source-quality.md)

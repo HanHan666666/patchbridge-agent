@@ -545,15 +545,23 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.dispatch({ type: 'TOOL_CONFIRMATION_RESOLVED' });
   }
 
-  /** 终止当前 run：作废事件提交、消费挂起的确认请求。 */
+  /**
+   * 终止当前 run：作废事件提交、消费挂起的确认请求。
+   *
+   * <p>取消顺序很关键：先在代次仍然有效时同步取消 Execution，让 Runtime 的
+   * 终态 Tool 记录（未执行/结果未知）通过最后一次 messages 事件进入当前视图；
+   * 之后才推进 generation 作废后续迟到结果（尤其是无法取消的保存写请求）。
+   */
   private abortRun(): void {
-    // 保存请求无法可靠取消，推进 generation 是阻止其迟到结果提交的关键屏障。
-    this.runGeneration += 1;
     if (this.runActive) {
-      this.runActive = false;
+      const execution = this.currentExecution;
       this.currentExecution?.cancel();
+      if (execution != null && this.currentExecution === execution) {
+        this.currentExecution = null;
+      }
+      this.runActive = false;
     }
-    this.currentExecution = null;
+    this.runGeneration += 1;
     this.runBaseMessages = [];
     this.toolInspection.deactivate();
   }
@@ -600,7 +608,14 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     });
   }
 
-  /** 一轮正常完成后持久化：必要时先创建会话，再整回合全量保存。 */
+  /**
+   * 一轮正常完成后持久化：必要时先创建会话，再整回合全量保存。
+   *
+   * <p>完整保存命令（消息、ModelContext、目标会话与 revision）在首个异步操作前
+   * 一次性固定；等待创建期间发生的会话导航只能作废本轮执行，不能把新会话的
+   * ModelContext 或消息混进保存体。写请求开始前再次确认执行仍然有效，
+   * 失效即放弃保存——迟到写请求由 generation 屏障阻止，而不是静默提交。
+   */
   private async persistRound(
     firstUserText: string,
     runGeneration: number,
@@ -608,6 +623,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   ): Promise<void> {
     this.dispatch({ type: 'CONVERSATION_SAVE_STARTED' });
     const messages = [...this.state.messages];
+    const modelContext = this.state.modelContext;
     // 将归属会话固定在本轮局部变量中；导航可以改变全局 state，但不能改变保存目标。
     let conversation = this.state.conversation;
     try {
@@ -616,13 +632,18 @@ export class DefaultAgentController implements PatchBridgeAgentController {
         conversation = await this.conversations.create(
           deriveTitle(firstUserText),
         );
+        // 首个写请求开始前的归属检查：创建挂起期间的导航/释放/新会话操作
+        // 已经作废本轮执行，此时不得再向任何目标写入内容。
+        if (!this.isCurrentRun(runGeneration)) {
+          return;
+        }
       }
       const saved = await this.conversations.save(conversation.conversationId, {
         title: conversation.title,
         revision: conversation.revision,
         context: {
           messages,
-          modelContext: this.state.modelContext,
+          modelContext,
         },
       });
       if (!this.isCurrentRun(runGeneration)) {

@@ -40,7 +40,7 @@ class AnnotatedToolProviderTest {
         Map<String, Object> item = new LinkedHashMap<String, Object>();
         item.put("value", "alpha");
 
-        ToolCallResult result = provider.call("generic",
+        ToolCallResult result = provider.call("generic", null,
                 Collections.<String, Object>singletonMap("items", Collections.singletonList(item)),
                 null);
 
@@ -57,9 +57,10 @@ class AnnotatedToolProviderTest {
         AnnotatedToolProvider provider = providerWith(new BindingTools());
 
         ToolExecutionException missing = assertThrows(ToolExecutionException.class,
-                () -> provider.call("generic", Collections.<String, Object>emptyMap(), null));
+                () -> provider.call("generic", null,
+                        Collections.<String, Object>emptyMap(), null));
         ToolExecutionException nullValue = assertThrows(ToolExecutionException.class,
-                () -> provider.call("generic",
+                () -> provider.call("generic", null,
                         Collections.<String, Object>singletonMap("items", null), null));
 
         assertEquals("缺少必填参数: items", missing.getMessage());
@@ -72,7 +73,8 @@ class AnnotatedToolProviderTest {
         AnnotatedToolProvider provider = providerWith(new BindingTools());
 
         ToolExecutionException failure = assertThrows(ToolExecutionException.class,
-                () -> provider.call("primitive", Collections.<String, Object>emptyMap(), null));
+                () -> provider.call("primitive", null,
+                        Collections.<String, Object>emptyMap(), null));
 
         assertEquals("基本类型参数不能为空: count", failure.getMessage());
     }
@@ -86,7 +88,7 @@ class AnnotatedToolProviderTest {
         arguments.put("tenantId", "forged");
 
         ToolExecutionException failure = assertThrows(ToolExecutionException.class,
-                () -> provider.call("primitive", arguments, null));
+                () -> provider.call("primitive", null, arguments, null));
 
         assertTrue(failure.getMessage().contains("tenantId"));
     }
@@ -96,7 +98,7 @@ class AnnotatedToolProviderTest {
     void shouldDiscoverInheritedToolMethod() throws Exception {
         AnnotatedToolProvider provider = providerWith(new InheritedTools());
 
-        ToolCallResult result = provider.call("inherited",
+        ToolCallResult result = provider.call("inherited", null,
                 Collections.<String, Object>singletonMap("value", "ok"), null);
 
         assertEquals("parent:ok", textOf(result));
@@ -115,7 +117,7 @@ class AnnotatedToolProviderTest {
         Object proxy = proxyFactory.getProxy();
         AnnotatedToolProvider provider = providerWith(proxy);
 
-        ToolCallResult result = provider.call("bridge",
+        ToolCallResult result = provider.call("bridge", null,
                 Collections.<String, Object>singletonMap("value", "ok"), null);
 
         assertEquals(1, provider.list().size());
@@ -141,17 +143,48 @@ class AnnotatedToolProviderTest {
         assertTrue(failure.getMessage().contains("无法通过 Spring Bean 的公共 API 调用"));
     }
 
-    /** 业务异常详情只保留在日志，模型只能收到稳定的通用失败文案。 */
+    /**
+     * VA-04：业务方法抛出的未识别异常必须脱敏后以 ToolExecutionException 终止本轮，
+     * 绝不能转换为 isError 业务结果让模型继续调用。
+     */
     @Test
-    void shouldHideBusinessExceptionDetailsFromModel() throws Exception {
+    void unrecognizedExceptionBecomesSanitizedExecutionFailure() {
         AnnotatedToolProvider provider = providerWith(new FailingTools());
 
-        ToolCallResult result = provider.call("failure",
+        ToolExecutionException failure = assertThrows(ToolExecutionException.class,
+                () -> provider.call("failure", null,
+                        Collections.<String, Object>emptyMap(), null));
+
+        assertTrue(failure.getMessage().contains("未预期异常"));
+        assertFalse(failure.getMessage().contains("secret-token"),
+                "未识别异常的原始消息不得进入对外错误");
+    }
+
+    /** 宿主显式返回 ofError 仍是模型可继续推理的业务失败，不受分类修复影响。 */
+    @Test
+    void explicitBusinessErrorResultRemainsModelVisible() throws Exception {
+        AnnotatedToolProvider provider = providerWith(new FailingTools());
+
+        ToolCallResult result = provider.call("business", null,
                 Collections.<String, Object>emptyMap(), null);
 
         assertTrue(result.isError());
-        assertEquals("Tool 执行失败", textOf(result));
-        assertFalse(textOf(result).contains("secret-token"));
+        assertEquals("设备不存在", textOf(result));
+    }
+
+    /**
+     * 业务方法抛出的异常不区分类型：即使是框架异常也一律脱敏终止，
+     * 保证“返回 ToolCallResult = 业务失败 / 抛异常 = 未预期失败”的契约只有两个通道。
+     */
+    @Test
+    void frameworkExceptionFromBusinessMethodIsSanitizedToo() {
+        AnnotatedToolProvider provider = providerWith(new FailingTools());
+
+        ToolExecutionException failure = assertThrows(ToolExecutionException.class,
+                () -> provider.call("explicit", null,
+                        Collections.<String, Object>emptyMap(), null));
+
+        assertEquals("Tool 执行发生未预期异常，本轮已终止", failure.getMessage());
     }
 
     /** Bean 创建失败必须中止扫描，不能被静默解释成该 Bean 没有 Tool。 */
@@ -295,13 +328,25 @@ class AnnotatedToolProviderTest {
         }
     }
 
-    /** 抛出包含敏感详情的业务异常。 */
+    /** 覆盖失败分类三种路径的业务 Tool。 */
     public static class FailingTools {
 
         /** 模拟下游系统把凭证写入异常消息。 */
         @AiTool(name = "failure")
         public String fail() {
             throw new IllegalStateException("downstream secret-token leaked");
+        }
+
+        /** 宿主显式表达业务失败：模型可以继续推理。 */
+        @AiTool(name = "business")
+        public ToolCallResult business() {
+            return ToolCallResult.ofError("设备不存在");
+        }
+
+        /** 宿主显式使用框架执行失败通道。 */
+        @AiTool(name = "explicit")
+        public String explicit() throws ToolExecutionException {
+            throw new ToolExecutionException("宿主主动终止");
         }
     }
 

@@ -154,7 +154,7 @@ public class PatchBridgeAgentAutoConfiguration {
     // ---------- 模型网关 ----------
 
     /**
-     * 从宿主必需的模型窗口配置派生 80% 阈值与近期保留预算。
+     * 从宿主必需的模型窗口配置派生 80% 阈值、近期保留预算与输出预留。
      * 缺失窗口在启动期失败，不能由 Browser 或 Provider 猜测。
      */
     @Bean
@@ -167,7 +167,9 @@ public class PatchBridgeAgentAutoConfiguration {
                     "patchbridge-agent.model.context-window-tokens 是必需配置");
         }
         return new ContextCompactionSettings(
-                contextWindowTokens.intValue(), properties.getModel().getKeepRecentTokens());
+                contextWindowTokens.intValue(),
+                properties.getModel().getKeepRecentTokens(),
+                properties.getModel().getReservedOutputTokens());
     }
 
     @Bean
@@ -376,12 +378,15 @@ public class PatchBridgeAgentAutoConfiguration {
     /**
      * 使用当前 ModelGateway 与当前 Provider 状态投影器生成上下文检查点。
      * 自定义 Provider 必须同时提供 ModelStateProjector，缺失时启动明确失败。
+     * 窗口设置同时用于摘要请求的预算检查，保证摘要与普通请求遵守同一输入预算。
      */
     @Bean
     @ConditionalOnMissingBean(ContextCompactionProvider.class)
     public ContextCompactionProvider contextCompactionProvider(
-            ModelGateway modelGateway, ModelStateProjector stateProjector) {
-        return new DefaultContextCompactionProvider(modelGateway, stateProjector);
+            ModelGateway modelGateway, ModelStateProjector stateProjector,
+            ContextCompactionSettings settings) {
+        return new DefaultContextCompactionProvider(
+                modelGateway, stateProjector, settings);
     }
 
     // ---------- Web 端点 ----------

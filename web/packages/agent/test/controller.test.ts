@@ -20,7 +20,10 @@ import type {
   AgentRunInput,
   AgentRunResult,
 } from '../src/engine';
+import { DefaultAgentRuntime } from '../src/runtime';
+import { CallTraceStore } from '../src/callTrace';
 import { BackendToolProvider, DefaultToolRegistry } from '../src/toolRegistry';
+import type { ModelStreamEvent, ModelUsage } from '../src/clients/modelClient';
 import type {
   AgentMessage,
   AgentState,
@@ -147,6 +150,9 @@ class FakeConversationClient implements ConversationClient {
   public conversations: Conversation[] = [];
   /** 所有首轮创建标题。 */
   public readonly createdTitles: Array<string | null> = [];
+  /** 自定义会话创建逻辑，用于在测试中挂起创建请求。 */
+  public createImpl: (title: string | null) => Promise<Conversation> = async title =>
+    conversation('conversation-new', 0, title);
   /** 所有原子保存请求。 */
   public readonly saved: SavedConversation[] = [];
   /** 所有删除目标。 */
@@ -173,7 +179,7 @@ class FakeConversationClient implements ConversationClient {
   /** 模拟首轮创建会话。 */
   async create(title: string | null): Promise<Conversation> {
     this.createdTitles.push(title);
-    return conversation('conversation-new', 0, title);
+    return this.createImpl(title);
   }
 
   /** 委托测试提供的加载脚本。 */
@@ -290,6 +296,80 @@ const MODEL_STATE: ModelState = {
 const COMPLETED_OUTCOME = {
   type: 'completed',
   stopReason: 'end-turn',
+} as const;
+
+/** 一轮完成后的明确模型工作上下文：usage 与可见消息严格对应本轮。 */
+function runModelContext(): ReturnType<typeof testModelContext> {
+  return Object.freeze({
+    ...testModelContext(),
+    usage: Object.freeze({
+      totalTokens: 120,
+      source: 'provider' as const,
+      measuredThroughMessageId: null,
+    }),
+  });
+}
+
+/** VA-03 端到端用例使用的测试用量。 */
+const SCRIPT_USAGE: ModelUsage = Object.freeze({
+  inputTokens: 100,
+  outputTokens: 20,
+  totalTokens: 120,
+});
+
+/** 可脚本化的模型端口：按调用顺序消费事件脚本并记录完整请求。 */
+class ScriptedControllerModel {
+  /** 每次模型调用消费一段事件数组。 */
+  public scripts: ModelStreamEvent[][] = [];
+  /** 按顺序记录每次请求的消息快照。 */
+  public readonly requests: AgentRunInput['conversation']['messages'][] = [];
+
+  /** 返回当前脚本对应的 AsyncIterable，并记录请求消息。 */
+  async *stream(
+    request: Parameters<import('../src/clients/modelClient').Model['stream']>[0],
+  ): AsyncIterable<ModelStreamEvent> {
+    this.requests.push([...request.messages]);
+    for (const event of this.scripts.shift() ?? []) {
+      yield event;
+    }
+  }
+}
+
+/** 构造带单个 Tool Call 的完整模型响应事件。 */
+function scriptedToolUse(callId: string, toolName: string): ModelStreamEvent[] {
+  return [
+    {
+      type: 'block-start',
+      index: 0,
+      block: { type: 'tool-call', callId, name: toolName },
+    },
+    {
+      type: 'block-delta',
+      index: 0,
+      delta: { type: 'tool-call', argumentsDelta: '{"target":"dev-1"}' },
+    },
+    { type: 'block-stop', index: 0 },
+    { type: 'message-stop', stopReason: 'tool-use', usage: SCRIPT_USAGE, modelState: null },
+  ];
+}
+
+/** 构造自然结束的文本响应事件。 */
+function scriptedText(text: string): ModelStreamEvent[] {
+  return [
+    { type: 'block-start', index: 0, block: { type: 'text' } },
+    { type: 'block-delta', index: 0, delta: { type: 'text', text } },
+    { type: 'block-stop', index: 0 },
+    { type: 'message-stop', stopReason: 'end-turn', usage: SCRIPT_USAGE, modelState: null },
+  ];
+}
+
+/** VA-03 端到端用例的执行预算。 */
+const RUNTIME_LIMITS = {
+  maxModelCalls: 4,
+  maxToolCalls: 8,
+  maxDurationMs: 10_000,
+  maxModelOutputCharacters: 10_000,
+  maxToolResultCharacters: 10_000,
 } as const;
 
 /** 创建可手动压缩的测试 ModelContext。 */
@@ -838,5 +918,236 @@ describe('DefaultAgentController', () => {
 
     expect(engine.disposed).toBe(true);
     expect(engine.executions).toEqual([]);
+  });
+
+  // ---------- VA-02：首轮保存的完整快照与归属检查 ----------
+
+  it('VA-02：首轮创建挂起期间加载 B，保存体不得混用 A/B 且不提交迟到写请求', async () => {
+    const { engine, conversations, controller } = makeController();
+    // 挂起 A 的首轮创建请求
+    let releaseCreate: ((value: Conversation) => void) | null = null;
+    conversations.createImpl = () => new Promise<Conversation>(resolve => {
+      releaseCreate = resolve;
+    });
+
+    const sending = controller.sendMessage('A 问题');
+    const execution = await waitForExecution(engine);
+    execution.finish({
+      messages: [textMessage('assistant-a', 'assistant', 'A 回答')],
+      modelContext: runModelContext(),
+      outcome: COMPLETED_OUTCOME,
+    });
+    // 等待持久化流程进入挂起的 create()
+    await vi.waitFor(() => {
+      expect(conversations.createdTitles).toHaveLength(1);
+      expect(releaseCreate).not.toBeNull();
+    });
+
+    // 创建挂起期间加载 B：导航作废本轮执行
+    await controller.loadConversation('B');
+    expect(controller.getState().conversation?.conversationId).toBe('B');
+
+    releaseCreate?.(conversation('conversation-A', 0, 'A 问题'));
+    await sending;
+
+    // 保存写请求从未发出：A 的内容不能带着 B 的 ModelContext 提交
+    expect(conversations.saved).toHaveLength(0);
+    // UI 保持 B；迟到结果不得覆盖当前视图
+    expect(controller.getState().conversation?.conversationId).toBe('B');
+    expect(controller.getState().messages).toEqual([
+      textMessage('user-B', 'user', '会话 B'),
+    ]);
+  });
+
+  it('VA-02：创建挂起期间新建空会话同样阻止写请求', async () => {
+    const { engine, conversations, controller } = makeController();
+    let releaseCreate: ((value: Conversation) => void) | null = null;
+    conversations.createImpl = () => new Promise<Conversation>(resolve => {
+      releaseCreate = resolve;
+    });
+
+    const sending = controller.sendMessage('A 问题');
+    const execution = await waitForExecution(engine);
+    execution.finish({
+      messages: [textMessage('assistant-a', 'assistant', 'A 回答')],
+      modelContext: testModelContext(),
+      outcome: COMPLETED_OUTCOME,
+    });
+    await vi.waitFor(() => expect(releaseCreate).not.toBeNull());
+
+    controller.startNewConversation();
+    releaseCreate?.(conversation('conversation-A', 0));
+    await sending;
+
+    expect(conversations.saved).toHaveLength(0);
+    expect(controller.getState().conversation).toBeNull();
+    expect(controller.getState().messages).toEqual([]);
+  });
+
+  it('VA-02：创建挂起期间释放 Controller 同样阻止写请求', async () => {
+    const { engine, conversations, controller } = makeController();
+    let releaseCreate: ((value: Conversation) => void) | null = null;
+    conversations.createImpl = () => new Promise<Conversation>(resolve => {
+      releaseCreate = resolve;
+    });
+
+    const sending = controller.sendMessage('A 问题');
+    const execution = await waitForExecution(engine);
+    execution.finish({
+      messages: [textMessage('assistant-a', 'assistant', 'A 回答')],
+      modelContext: testModelContext(),
+      outcome: COMPLETED_OUTCOME,
+    });
+    await vi.waitFor(() => expect(releaseCreate).not.toBeNull());
+
+    controller.dispose();
+    releaseCreate?.(conversation('conversation-A', 0));
+    await sending;
+
+    expect(conversations.saved).toHaveLength(0);
+  });
+
+  it('VA-02：首轮创建失败产生明确错误结果，不留成功假象', async () => {
+    const { engine, conversations, controller } = makeController();
+    conversations.createImpl = async () => {
+      throw new Error('会话服务不可用');
+    };
+
+    const sending = controller.sendMessage('A 问题');
+    const execution = await waitForExecution(engine);
+    execution.finish({
+      messages: [textMessage('assistant-a', 'assistant', 'A 回答')],
+      modelContext: runModelContext(),
+      outcome: COMPLETED_OUTCOME,
+    });
+    await sending;
+
+    expect(conversations.saved).toHaveLength(0);
+    expect(controller.getState().status).toBe('error');
+    expect(controller.getState().error).toMatchObject({ code: 'INVALID_STATE' });
+    // 稳定消息保留在当前页，完整历史不受失败影响
+    expect(controller.getState().messages.at(-1)).toMatchObject({ id: 'assistant-a' });
+  });
+
+  it('VA-02：已持久化会话的保存体在保存前固定完整 ModelContext', async () => {
+    const { engine, conversations, controller } = makeController();
+    // 预置当前会话 C，发送后保存体必须引用 C 的消息与 C 的模型状态
+    conversations.conversations = [conversation('C', 3)];
+    await controller.initialize('C');
+
+    const sending = controller.sendMessage('C 问题');
+    const execution = await waitForExecution(engine);
+    execution.finish({
+      messages: [textMessage('assistant-c', 'assistant', 'C 回答')],
+      modelContext: runModelContext(),
+      outcome: COMPLETED_OUTCOME,
+    });
+    await sending;
+
+    const saved = conversations.saved.at(-1);
+    expect(saved?.id).toBe('C');
+    // 保存体携带 initialize('C') 时取得的 revision，保证乐观锁归属一致
+    expect(saved?.body.revision).toBe(5);
+    expect(saved?.body.context.messages.at(-1)).toMatchObject({ id: 'assistant-c' });
+    // ModelContext 与消息来自同一轮快照，不混入其他会话状态
+    expect(saved?.body.context.modelContext.usage?.totalTokens).toBe(120);
+    expect(saved?.body.context.modelContext.modelState).toBeNull();
+  });
+
+  // ---------- VA-03：取消后下一轮工作上下文的继续契约 ----------
+
+  it('VA-03：确认前取消后再次发送，第二次模型输入严格配对且原 Tool 未执行', async () => {
+    const model = new ScriptedControllerModel();
+    let sequence = 0;
+    // 启用轨迹采集：终态记录必须通过 Call Trace 的整批引用校验而不破坏轨迹；
+    // Hook 收到未知 traceId 会抛错，轨迹校验因此真实覆盖本用例的全部消息事件。
+    const callTrace = new CallTraceStore({ mode: 'memory' });
+    const runtime = new DefaultAgentRuntime(model, {
+      limits: RUNTIME_LIMITS,
+      contextManager: testContextManager(),
+      createId: kind => `${kind}-${++sequence}`,
+      hooks: [callTrace],
+    });
+    const engine = new FakeEngine();
+    const conversations = new FakeConversationClient();
+    const tools = new DefaultToolRegistry();
+    let executed = 0;
+    tools.register({
+      name: 'page.restart',
+      description: '重启设备',
+      inputSchema: { type: 'object' },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        requireConfirmation: true,
+      },
+      execute: () => {
+        executed += 1;
+        return '已重启';
+      },
+    });
+    const controller = new DefaultAgentController({
+      engine: runtime,
+      conversations,
+      tools,
+      contextManager: testContextManager(),
+      callTrace,
+    });
+
+    // 第一轮：模型要求执行需要确认的前端 Tool，等待确认时用户取消
+    model.scripts.push(scriptedToolUse('call-1', 'page.restart'));
+    const first = controller.sendMessage('第一轮');
+    await vi.waitFor(() =>
+      expect(controller.getState().pendingConfirmation).not.toBeNull());
+    controller.abort();
+    await first;
+
+    expect(executed).toBe(0);
+    expect(controller.getState().runOutcome).toEqual({ type: 'cancelled' });
+    // 当前页历史包含明确的取消记录，Assistant Tool Call 不再悬空
+    const visibleTools = controller.getState().messages.filter(message =>
+      message.role === 'tool');
+    expect(visibleTools).toHaveLength(1);
+    expect(visibleTools[0]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        name: 'page.restart',
+        status: 'error',
+      }],
+    });
+    expect(JSON.stringify(visibleTools[0])).toContain('未执行');
+
+    // 第二轮：出站消息必须严格配对，不允许把未闭合 Tool Call 发给 Provider
+    model.scripts.push(scriptedText('好的，已跳过重启'));
+    const second = controller.sendMessage('第二轮');
+    await vi.waitFor(() =>
+      expect(conversations.createdTitles).toHaveLength(1));
+    // 第二轮模型请求在运行开始即发出，等待运行收敛后统一断言
+    await vi.waitFor(() => expect(model.requests).toHaveLength(2));
+    await second;
+    const secondRequest = model.requests[1];
+    expect(secondRequest).toHaveLength(4);
+    expect(secondRequest[0]).toMatchObject({ role: 'user' });
+    expect(secondRequest[1]).toMatchObject({
+      role: 'assistant',
+      blocks: [{ type: 'tool-call', callId: 'call-1' }],
+    });
+    expect(secondRequest[2]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'error',
+      }],
+    });
+    expect(secondRequest[3]).toMatchObject({ role: 'user' });
+    expect(JSON.stringify(secondRequest)).not.toContain('"type":"tool-call","callId":"call-2"');
+
+    // 轨迹存活且未被回填校验拒绝：取消记录关联到已登记的 Tool Call
+    const traces = controller.getCallTraceSource().snapshot().traces;
+    expect(traces.length).toBeGreaterThanOrEqual(1);
   });
 });
