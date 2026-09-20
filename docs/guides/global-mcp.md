@@ -21,6 +21,18 @@ Browser Cookie、Authorization 和任意用户 Header不会默认转发给远端
 
 JDBC 配置变更侦测使用单行 <code>agent_mcp_config_generation</code> 表：每次 create/update/delete 在同一事务内递增 generation，多实例通过该版本决定是否重读配置；稳态请求的版本读取是 O(1) 单行查询，不扫描配置行、不读取凭据密文。该表由 schema 初始化脚本创建并播种，升级部署需执行最新 <code>agent-schema-*.sql</code>。
 
+### 工具版本共享密钥
+
+两种配置源都必须提供 `patchbridge-agent.mcp.tool-version-key`。用 `openssl rand -base64 32`
+单独生成，将同一密钥注入所有实例，并在重启后保持不变；它与 JDBC 凭据加密密钥独立。
+默认 Registry 在密钥缺失或格式不合法时启动失败。
+
+公开的 Tool 版本包含路由、认证身份和定义变化，但使用 HMAC-SHA-256 避免成为密码猜测的
+离线校验器。认证凭据或共享密钥变化都会使旧引用失效；轮换密钥时统一更新实例，浏览器
+重新发现工具后由用户重新发起调用，框架不自动重试。完整字段见[配置参考](../reference/configuration.md)。
+底层验证见 `McpToolRegistryVersionTest`：相同密钥跨实例一致、凭据变化拒绝旧引用、不同
+密钥产生不同版本、密钥轮换拒绝旧调用，以及缺失或非法密钥阻止启动。
+
 ### Admin 控制台
 
 Admin 静态入口固定为 <code>/ai-admin/</code>。其页面、API 和静态资源都经过 <code>AdminAuthorizationInterceptor</code>；宿主还应在自己的 Security Filter Chain 中限制认证、来源网络和 CSRF/CORS。
@@ -50,7 +62,7 @@ Trace 统计卡片中的 P50/P95 耗时基于“最近一万次调用”的时�
 
 ### 开启 JDBC 管理模式
 
-先生成 32 字节 AES-256 密钥的标准 Base64 文本：
+分别生成版本签名与凭据加密使用的两份 32 字节密钥，命令各执行一次：
 
 ```bash
 openssl rand -base64 32
@@ -63,6 +75,7 @@ patchbridge-agent:
   admin:
     enabled: true
   mcp:
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     source: jdbc
     jdbc:
       encryption-key: ${PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY}

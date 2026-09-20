@@ -26,6 +26,7 @@
 | 409 | <code>MCP_CONFIG_CONFLICT</code> | MCP 名称或 revision 冲突 |
 | 409 | <code>MCP_CONFIG_READ_ONLY</code> | properties 模式写操作 |
 | 500 | <code>TOOL_FAILED</code> | Tool 执行异常 |
+| 413 | <code>CONTEXT_WINDOW_EXCEEDED</code> | 上下文摘要请求超过“窗口 − 输出预留”预算 |
 | 502 | <code>MCP_FAILED</code> | MCP 协议或连接异常 |
 | 502 | <code>MODEL_FAILED</code> | 未进入 SSE 流的模型网关异常，或上下文摘要 / Provider 状态投影失败 |
 | 200 SSE | <code>MODEL_FAILED</code> | 流内 error 帧 |
@@ -59,7 +60,7 @@
 | `AGENT_EXECUTION_TIMEOUT` | 整体 Execution 超过 `maxDurationMs` |
 | `MODEL_OUTPUT_LIMIT_EXCEEDED` | 单次模型调用聚合字符超限 |
 | `TOOL_RESULT_LIMIT_EXCEEDED` | Tool 结果文本超限 |
-| `CONTEXT_WINDOW_EXCEEDED` | 压缩后输入或首次输入超过最终窗口预算 |
+| `CONTEXT_WINDOW_EXCEEDED` | 压缩后输入或首次输入超过最终窗口预算（Browser 本地检查，或服务端摘要超限的 413 响应） |
 | `INVALID_STATE` | 缺少必需模型 usage、压缩边界或严格上下文配置/响应不成立 |
 
 上述错误均为 `retryable: false`。是否重新发起一次新 Execution 由用户或宿主决定，框架不自动重试。

@@ -21,13 +21,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class McpConfigurationManagerTest {
 
+    /** 仅用于测试的固定版本密钥哨兵，生产部署必须注入随机共享密钥。 */
+    private static final String TOOL_VERSION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
     /** 新配置成功写入后应立即出现在 Registry 路由快照中。 */
     @Test
     void createPublishesNewImmutableRegistrySnapshot() {
         InMemoryStore store = new InMemoryStore();
         RecordingClient client = new RecordingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                Collections.<String, McpServerConfig>emptyMap(), client, "mcp");
+                Collections.<String, McpServerConfig>emptyMap(), client, "mcp", TOOL_VERSION_KEY);
         McpConfigurationManager manager = new McpConfigurationManager(store, registry);
 
         manager.create("inventory", config("first-token"));
@@ -43,7 +46,7 @@ class McpConfigurationManagerTest {
     void keepCredentialIsExplicitAndTypeSafe() {
         InMemoryStore store = new InMemoryStore();
         McpToolRegistry registry = new McpToolRegistry(
-                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp");
+                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp", TOOL_VERSION_KEY);
         McpConfigurationManager manager = new McpConfigurationManager(store, registry);
         McpServerRecord created = manager.create("inventory", config("first-token"));
         McpServerConfig requested = config(null);
@@ -64,7 +67,7 @@ class McpConfigurationManagerTest {
     void keepRejectsMissingAuthObjectExplicitly() {
         InMemoryStore store = new InMemoryStore();
         McpToolRegistry registry = new McpToolRegistry(
-                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp");
+                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp", TOOL_VERSION_KEY);
         McpConfigurationManager manager = new McpConfigurationManager(store, registry);
         McpServerRecord created = manager.create("inventory", config("first-token"));
         McpServerConfig requested = config(null);
@@ -79,7 +82,7 @@ class McpConfigurationManagerTest {
     void replaceRejectsNoneAuth() {
         InMemoryStore store = new InMemoryStore();
         McpToolRegistry registry = new McpToolRegistry(
-                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp");
+                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp", TOOL_VERSION_KEY);
         McpConfigurationManager manager = new McpConfigurationManager(store, registry);
         McpServerRecord created = manager.create("inventory", config("first-token"));
         McpServerConfig requested = config(null);
@@ -95,7 +98,7 @@ class McpConfigurationManagerTest {
         PropertiesMcpConfigurationStore store = new PropertiesMcpConfigurationStore(
                 Collections.<String, McpServerConfig>emptyMap());
         McpToolRegistry registry = new McpToolRegistry(
-                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp");
+                Collections.<String, McpServerConfig>emptyMap(), new RecordingClient(), "mcp", TOOL_VERSION_KEY);
         McpConfigurationManager manager = new McpConfigurationManager(store, registry);
 
         assertThrows(McpConfigurationReadOnlyException.class,

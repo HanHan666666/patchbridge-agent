@@ -49,6 +49,7 @@ import type {
   ToolCallBlock,
   ToolCallResult,
   ToolDefinition,
+  ToolResultBlock,
 } from './types';
 import {
   copyAndFreezeJsonObject,
@@ -270,10 +271,25 @@ class DefaultAgentExecution implements AgentExecution {
   private readonly invokeTool: ToolCallNext;
   /** 本轮已经通过完整预检并稳定提交的消息。 */
   private readonly stableMessages: AgentMessage[] = [];
+  /**
+   * 与完整稳定消息同步推进的下一轮模型工作上下文。
+   *
+   * <p>working 与 stable 必须在同一方法内成对推进：Tool 结果只有先同时进入两份
+   * 数组并解除未闭合跟踪，才允许向外发布事件。终态补写只更新 stable——取消或失败
+   * 后不再存在下一轮模型输入，working 随 Execution 一起废弃。
+   */
+  private workingMessages: AgentMessage[] = [];
   /** 与完整 working 消息严格对应的当前模型工作上下文。 */
   private stableModelContext: ModelContext;
   /** 当前批次中尚未收到真实结果的 Tool Call；结果回填后移除。 */
   private readonly openToolCalls = new Map<string, OpenToolCall>();
+  /**
+   * 结果仍未核实的 Tool 名集合；从完整历史的结构化执行事实恢复，执行期间按事实推进。
+   *
+   * <p>调用发出（结果未知风险）即纳入；真实结果落地（无论业务成败）即解除——
+   * 人工批准本身就是对上一轮未知结果的核实。未执行（含用户拒绝）不改变集合。
+   */
+  private readonly unresolvedToolNames: Set<string>;
   /** 输入上下文与本次 Execution 已接受的全部 Tool Call ID。 */
   private readonly acceptedToolCallIds = new Set<string>();
   /** 本次 Execution 已通过整批预检的 Tool Call 数量。 */
@@ -329,6 +345,7 @@ class DefaultAgentExecution implements AgentExecution {
       throw new Error('Runtime Deadline 必须是有限毫秒值');
     }
     this.stableModelContext = snapshotModelContext(input.conversation.modelContext);
+    this.unresolvedToolNames = collectUnresolvedToolNames(input.conversation.messages);
     this.invokeTool = composeToolInterceptors(
       toolInterceptors,
       invocation => this.input.toolSnapshot.invoke(
@@ -365,7 +382,7 @@ class DefaultAgentExecution implements AgentExecution {
         return;
       }
       void this.execute().then(
-        result => this.settleSuccess(result, false),
+        result => this.settleSuccess(result.outcome),
         cause => this.settleFailure(cause),
       );
     } catch (cause) {
@@ -403,18 +420,9 @@ class DefaultAgentExecution implements AgentExecution {
     pending.resolve(response.value);
   }
 
-  /**
-   * 幂等取消模型、Tool 和等待中的用户确认。
-   *
-   * <p>取消不抹除已发生的工具事实：结果已知的调用保留真实结果，未收到结果的
-   * 调用先补写明确的取消/结果未知记录并作为稳定消息发布，再收敛终态。
-   * 直接使用 Engine 的宿主因此同时通过事件与 result 获得可继续的工作上下文。
-   */
+  /** 幂等取消本轮；先关闭执行门，再同步交付包含终态 Tool 事实的完整快照。 */
   cancel(): void {
-    if (this.appendTerminalToolRecords('cancelled')) {
-      this.publishMessages();
-    }
-    this.settleSuccess(this.snapshotResult({ type: 'cancelled' }), true);
+    this.settleSuccess({ type: 'cancelled' });
   }
 
   /** 终态是否仍开放；所有观察事件和 Tool 副作用都以此为统一门。 */
@@ -423,42 +431,55 @@ class DefaultAgentExecution implements AgentExecution {
   }
 
   /**
-   * 以成功、截断或取消结果竞争唯一终态。
+   * 竞争唯一成功终态；取消通知允许同步重入，但关闭的执行门保证只交付一次。
    *
-   * <p>取消先同步关闭发布门，再触发 Abort 和当前活动 waiter；不合作的 Promise
-   * 即使永不返回，也不能阻止 result 收敛或在稍后继续发布事件。
+   * <p>最终消息监听器异常必须拒绝 result，不能让 Promise 永久挂起。普通完成的
+   * 消息已经在循环内发布；取消则必须在 Controller 作废本轮代次前同步补齐事实。
    */
-  private settleSuccess(result: AgentRunResult, abortUpstream: boolean): void {
+  private settleSuccess(outcome: AgentRunOutcome): void {
     if (!this.isRunning()) {
       return;
     }
     this.lifecycle = 'settling';
-    if (abortUpstream) {
-      this.stopPendingWork();
-    }
     this.clearDeadline();
-    this.publishTerminalHook({
-      type: 'execution-completed',
-      outcome: result.outcome,
-      addedMessageCount: result.messages.length,
-    });
-    this.lifecycle = 'settled';
-    this.resolveResult(result);
+    try {
+      if (outcome.type === 'cancelled') {
+        this.stopPendingWork();
+        this.appendTerminalToolRecords('cancelled');
+        this.deliverMessages();
+      }
+      const result = this.snapshotResult(outcome);
+      this.publishTerminalHook({
+        type: 'execution-completed',
+        outcome,
+        addedMessageCount: result.messages.length,
+      });
+      this.lifecycle = 'settled';
+      this.resolveResult(result);
+    } catch (cause) {
+      this.completeFailure(cause);
+    }
   }
 
-  /** 以异常竞争唯一终态，并确保仍在等待的 Model、Tool 或确认立即失去发布资格。 */
+  /** 异常同样先关闭执行门，再补齐配对结果；通知失败通过 result 明确传播。 */
   private settleFailure(cause: unknown): void {
     if (!this.isRunning()) {
       return;
     }
-    // 失败终态同样不能留下未配对的 Tool Call：补写记录后先发布一次稳定消息，
-    // 让 Controller 的历史在 RUN_FAILED 之前就包含可继续的工作上下文。
-    if (this.appendTerminalToolRecords('failed')) {
-      this.publishMessages();
-    }
     this.lifecycle = 'settling';
-    this.stopPendingWork();
     this.clearDeadline();
+    try {
+      this.stopPendingWork();
+      this.appendTerminalToolRecords('failed');
+      this.deliverMessages();
+    } catch (notificationFailure) {
+      cause = notificationFailure;
+    }
+    this.completeFailure(cause);
+  }
+
+  /** 在执行门已关闭后完成异常通知与 Promise 收敛，不再触发消息回调。 */
+  private completeFailure(cause: unknown): void {
     const error = toLifecycleError(cause);
     this.publishTerminalHook({
       type: 'execution-failed',
@@ -492,10 +513,10 @@ class DefaultAgentExecution implements AgentExecution {
   /** 执行模型 → Tool → 模型有界循环，并只保留已完成稳定消息。 */
   private async execute(): Promise<AgentRunResult> {
     const signal = this.abortController.signal;
-    const working: AgentMessage[] = this.input.conversation.messages.map(
+    this.workingMessages = this.input.conversation.messages.map(
       snapshotAgentMessage,
     );
-    this.initializeHistoricalToolCallIds(working);
+    this.initializeHistoricalToolCallIds(this.workingMessages);
     const tools = toModelTools(this.input.toolSnapshot.tools);
 
     for (let modelCall = 1; modelCall <= this.limits.maxModelCalls; modelCall += 1) {
@@ -504,7 +525,7 @@ class DefaultAgentExecution implements AgentExecution {
       }
       this.requireWithinDeadline();
       const pendingConversation = {
-        messages: working,
+        messages: this.workingMessages,
         modelContext: this.stableModelContext,
       };
       const requiresCompaction = this.contextManager.requiresAutomaticCompaction(
@@ -563,18 +584,22 @@ class DefaultAgentExecution implements AgentExecution {
       const { assembled, firstTokenLatencyMs, outputDurationMs } = streamed;
       const assistantMessage = snapshotAgentMessage(assembled.message);
       const preparedTools = this.prepareToolBatch(assistantMessage, modelCall);
+      // 未闭合跟踪必须先于 Assistant 消息对外可见而登记：此后任何时点的取消或失败
+      // 都能把整批 Tool Call 补写成明确的终态记录，订阅者看到的最终快照始终配对。
+      this.openToolBatch(preparedTools);
 
+      this.workingMessages.push(assistantMessage);
       this.stableMessages.push(assistantMessage);
-      working.push(assistantMessage);
       this.stableModelContext = snapshotModelContext(
         this.contextManager.recordModelResponse(
           {
-            messages: working,
+            messages: this.workingMessages,
             modelContext: this.stableModelContext,
           },
           assistantMessage,
           assembled.usage,
           assembled.modelState,
+          tools,
         ).modelContext,
       );
       this.publishHook({
@@ -605,7 +630,6 @@ class DefaultAgentExecution implements AgentExecution {
         return this.snapshotResult({ type: 'cancelled' });
       }
       this.requireWithinDeadline();
-      this.openToolBatch(preparedTools);
       for (const prepared of preparedTools) {
         if (!this.isRunning()) {
           return this.snapshotResult({ type: 'cancelled' });
@@ -615,15 +639,9 @@ class DefaultAgentExecution implements AgentExecution {
           return this.snapshotResult({ type: 'cancelled' });
         }
         this.requireWithinDeadline();
-        const toolMessage = snapshotAgentMessage(toToolResultMessage(
-          this.nextId('message'),
-          prepared.call,
-          toolOutcome,
-        ));
-        working.push(toolMessage);
-        this.stableMessages.push(toolMessage);
+        // 结果事实已在 executeToolCall 内完成内部收敛并发布 tool-result 事件，
+        // 这里只需让订阅者拿到与稳定历史一致的完整快照。
         this.publishMessages();
-        this.openToolCalls.delete(prepared.call.callId);
       }
     }
     throw maxModelCallsError(this.limits.maxModelCalls);
@@ -742,8 +760,13 @@ class DefaultAgentExecution implements AgentExecution {
     }
     this.requireWithinDeadline();
 
-    if (definition.annotations?.requireConfirmation) {
-      const approved = await this.requestConfirmation(definition, toolCall.input);
+    const unverified = this.unresolvedToolNames.has(toolCall.name);
+    if (unverified || definition.annotations?.requireConfirmation) {
+      const approved = await this.requestConfirmation(
+        definition,
+        toolCall.input,
+        unverified ? 'unverified-previous-invocation' : undefined,
+      );
       if (approved == null || !this.isRunning()) {
         return null;
       }
@@ -790,21 +813,14 @@ class DefaultAgentExecution implements AgentExecution {
       this.markToolResultRejected(toolCall.callId);
       throw cause;
     }
-    // Hook 是观察端口：其异常必须终止 Execution，不能被误报成 Tool 业务失败。
-    this.publishToolResult(toolCall, result);
-    this.publishHook({
-      type: 'tool-call-completed',
-      callId: toolCall.callId,
-      toolName: toolCall.name,
-      isError: result.isError,
-    });
-    return { content: result.content, isError: result.isError };
+    return this.settleToolResult(toolCall, result.content, result.isError, 'completed');
   }
 
   /** 发布 Tool 确认中断，并等待当前 Execution 的精确响应。 */
   private requestConfirmation(
     tool: ToolDefinition,
     arguments_: JsonObject,
+    reason?: 'unverified-previous-invocation',
   ): Promise<boolean | null> {
     this.requireWithinDeadline();
     return new Promise<boolean | null>(resolve => {
@@ -813,6 +829,7 @@ class DefaultAgentExecution implements AgentExecution {
         type: 'tool-confirmation',
         tool,
         arguments: arguments_,
+        ...(reason == null ? {} : { reason }),
       };
       this.pendingInterrupt = { interrupt, resolve };
       this.publishHook({ type: 'interrupt-requested', interrupt });
@@ -827,31 +844,50 @@ class DefaultAgentExecution implements AgentExecution {
   ): ToolExecutionOutcome {
     const content = `工具 ${toolCall.name} 未执行：${reason}`;
     assertToolResultLimit(content, this.limits.maxToolResultCharacters);
+    return this.settleToolResult(toolCall, content, true, 'not-executed');
+  }
+
+  /**
+   * 先完成内部状态转换，再向外发布 Tool 结果事件与完成 Hook。
+   *
+   * <p>结果事实必须先同时进入 working 与 stable 并解除未闭合跟踪，之后才允许发布：
+   * 订阅或 Hook 回调中的同步取消只能补写其余仍未闭合的调用，既不能把已收敛的真实
+   * 结果改写成“结果未知”，也不能让同一调用重复出现两条 Tool Result。
+   * Hook 是观察端口：其异常必须终止 Execution，不能被误报成 Tool 业务失败。
+   */
+  private settleToolResult(
+    toolCall: ToolCallBlock,
+    content: string,
+    isError: boolean,
+    execution: ToolResultBlock['execution'],
+  ): ToolExecutionOutcome {
+    const toolMessage = snapshotAgentMessage(toToolResultMessage(
+      this.nextId('message'),
+      toolCall,
+      { content, isError },
+      execution,
+    ));
+    // 只有真实执行过的调用其结果才算“已知”：用户拒绝等未执行路径不解除未核实状态。
+    if (this.openToolCalls.get(toolCall.callId)?.state === 'invoked') {
+      this.unresolvedToolNames.delete(toolCall.name);
+    }
+    this.workingMessages.push(toolMessage);
+    this.stableMessages.push(toolMessage);
+    this.openToolCalls.delete(toolCall.callId);
     this.publishEvent({
       type: 'tool-result',
       toolCallId: toolCall.callId,
       toolName: toolCall.name,
       content,
-      isError: true,
+      isError,
     });
     this.publishHook({
       type: 'tool-call-completed',
       callId: toolCall.callId,
       toolName: toolCall.name,
-      isError: true,
+      isError,
     });
-    return { content, isError: true };
-  }
-
-  /** 发布正常 Tool 结果观察事件。 */
-  private publishToolResult(toolCall: ToolCallBlock, result: ToolCallResult): void {
-    this.publishEvent({
-      type: 'tool-result',
-      toolCallId: toolCall.callId,
-      toolName: toolCall.name,
-      content: result.content,
-      isError: result.isError,
-    });
+    return { content, isError };
   }
 
   /** 只把可展示的文本和思考增量交给 Controller。 */
@@ -866,11 +902,21 @@ class DefaultAgentExecution implements AgentExecution {
     }
   }
 
-  /** 发布与内部数组引用隔离的本轮稳定消息快照。 */
+  /** 运行期间发布稳定消息；终态之后的普通回调不能再次发布。 */
   private publishMessages(): void {
-    this.publishEvent({
+    if (this.isRunning()) {
+      this.deliverMessages();
+    }
+  }
+
+  /**
+   * 同步交付隔离的消息快照。终态调用方已关闭执行门，允许取消时重入本方法一次，
+   * 确保 Controller 在使代次失效之前收到新补齐的 Tool Result；再次取消不再发事件。
+   */
+  private deliverMessages(): void {
+    this.listener({
       type: 'messages',
-      messages: [...this.stableMessages],
+      messages: Object.freeze([...this.stableMessages]),
       modelContext: snapshotModelContext(this.stableModelContext),
     });
   }
@@ -891,6 +937,7 @@ class DefaultAgentExecution implements AgentExecution {
     const open = this.openToolCalls.get(callId);
     if (open != null && open.state === 'pending') {
       open.state = 'invoked';
+      this.unresolvedToolNames.add(open.name);
     }
   }
 
@@ -899,6 +946,7 @@ class DefaultAgentExecution implements AgentExecution {
     const open = this.openToolCalls.get(callId);
     if (open != null && open.state === 'invoked') {
       open.state = 'result-rejected';
+      this.unresolvedToolNames.add(open.name);
     }
   }
 
@@ -911,11 +959,12 @@ class DefaultAgentExecution implements AgentExecution {
    * 对话。禁止编造成功结果，也禁止静默丢弃调用。记录作为普通 tool 消息进入
    * 稳定历史，下一轮模型输入因此始终严格配对。
    *
-   * @return 是否补写了至少一条记录；无可补记录时返回 false，调用方据此避免重复发布
+   * <p>记录只更新 stable：终态之后不再存在下一轮模型输入，working 已随 Execution
+   * 废弃。调用方随后必须同步 deliverMessages，保证补写事实对订阅者可见。
    */
-  private appendTerminalToolRecords(reason: 'cancelled' | 'failed'): boolean {
+  private appendTerminalToolRecords(reason: 'cancelled' | 'failed'): void {
     if (this.openToolCalls.size === 0) {
-      return false;
+      return;
     }
     const open = [...this.openToolCalls.values()];
     this.openToolCalls.clear();
@@ -936,11 +985,12 @@ class DefaultAgentExecution implements AgentExecution {
           callId: entry.callId,
           name: entry.name,
           status: 'error',
+          execution: entry.state === 'pending' ? 'not-executed'
+            : entry.state === 'invoked' ? 'unknown' : 'result-omitted',
           content: [{ type: 'text', text: content }],
         }],
       }));
     }
-    return true;
   }
 
   /**
@@ -1229,6 +1279,7 @@ function toToolResultMessage(
   messageId: string,
   toolCall: ToolCallBlock,
   outcome: ToolExecutionOutcome,
+  execution: ToolResultBlock['execution'],
 ): AgentMessage {
   return {
     id: messageId,
@@ -1238,6 +1289,7 @@ function toToolResultMessage(
       callId: toolCall.callId,
       name: toolCall.name,
       status: outcome.isError ? 'error' : 'success',
+      execution,
       content: [{ type: 'text', text: outcome.content }],
     }],
   };
@@ -1499,4 +1551,30 @@ function toLifecycleError(cause: unknown): AgentError {
     message: cause instanceof Error ? cause.message : 'Agent 执行失败',
     retryable: false,
   };
+}
+
+/** 从完整历史重建核实约束；拒绝和未执行不解除旧未知事实，真实结果才解除同名约束。 */
+function collectUnresolvedToolNames(messages: readonly AgentMessage[]): Set<string> {
+  const names = new Set<string>();
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      if (block.type !== 'tool-result') {
+        continue;
+      }
+      switch (block.execution) {
+        case 'unknown':
+        case 'result-omitted':
+          names.add(block.name);
+          break;
+        case 'completed':
+          names.delete(block.name);
+          break;
+        case 'not-executed':
+          break;
+        default:
+          throw modelProtocolError('历史 Tool Result 缺少有效的 execution 执行事实');
+      }
+    }
+  }
+  return names;
 }

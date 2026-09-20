@@ -115,7 +115,7 @@ Audit 默认 enabled，默认 payload-mode=metadata-only。full 模式也先经�
 - [ ] Admin 默认关闭；开启时四项 AdminCapability 都有明确策略，未知路径拒绝。
 - [ ] Cookie/CSRF/CORS 或 Bearer 请求链复用宿主安全配置。
 - [ ] MCP URL 的出站代理、防火墙、DNS 和审批流程已限制 SSRF 风险。
-- [ ] MCP 主密钥由 KMS/Vault/环境注入并可轮换，数据库只保存 AES-GCM 密文。
+- [ ] MCP 凭据加密密钥与工具版本密钥分别由密钥系统或环境注入；版本密钥在所有实例一致、重启后保持不变，数据库只保存 AES-GCM 凭据密文。
 - [ ] Browser Cookie/Authorization 不转发到 MCP；静态 Header 配置经过审批。
 - [ ] Audit payload、Redactor、保留期、访问权限和 fail-open 行为符合合规要求。
 - [ ] Call Trace localStorage 内容、保留条数和共享浏览器隐私政策已评估。
@@ -135,6 +135,7 @@ Audit 默认 enabled，默认 payload-mode=metadata-only。full 模式也先经�
 | 启动缺 CurrentUserProvider | 无 Spring Security 默认适配 | 提供宿主 CurrentUserProvider |
 | 启动缺 ConversationRepository | 无 DataSource 且无自定义 Repository | 配置 DataSource/schema 或自定义 Repository |
 | Admin 开启后启动失败 | 缺 AdminAccessPolicy | 映射宿主权限后再开启 |
+| 默认 MCP Registry 启动失败 | `mcp.tool-version-key` 缺失或格式非法 | 按[配置参考](../reference/configuration.md)注入独立的 32 字节 Base64 共享版本密钥 |
 | JDBC MCP 启动失败 | 密钥缺失/非标准 Base64/不是 32 字节 | 从密钥系统注入正确 AES-256 key |
 | 400 INVALID_ARGUMENT | 未知字段、缺 tools/modelState/arguments 或范围非法 | 按当前严格 DTO 修正请求 |
 | 401 AUTH_REQUIRED | 登录态缺失或过期 | 走宿主登录流程，不从 Browser 伪造用户 |

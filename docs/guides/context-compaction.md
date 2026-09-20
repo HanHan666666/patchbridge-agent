@@ -67,12 +67,17 @@ patchbridge-agent:
 ### 最终窗口预算检查
 
 每次模型调用前，Browser 会对最终出站输入做一次预算检查：工作消息（含 system 指令与摘要
-检查点）、本轮 Tool 定义与输出预留之和不得超过“窗口 − 输出预留”。压缩成功不代表检查通过：
+检查点）与本轮 Tool 定义之和不得超过“窗口 − 输出预留”。压缩成功不代表检查通过。
+Provider 基线已经包含上次目录，`usage.toolDefinitionTokens` 保存该目录的估算量；
+本轮只补计目录增长的差额，既不重复计量相同目录，也不等到超大新目录已经发给模型后
+才检查。目录缩小不从真实基线扣除估算值，下一份真实 usage 会更新基线。
+`estimated` 基线只覆盖消息，目录估算基线明确为 0；首次调用尚无 usage 时估算完整输入。
 
 - 压缩后的工作上下文仍装不下窗口（例如最新安全段过大、摘要过长）时，本次请求明确失败，
   检查点不提交，完整历史保留；
 - 首次调用尚无 Provider usage 时按完整出站输入估算，超大输入同样明确失败；
-- 服务端摘要请求遵守同一预算，超限在调用模型前失败。
+- 服务端摘要请求遵守同一预算，超限在调用模型前失败，HTTP 侧以 `413
+  CONTEXT_WINDOW_EXCEEDED` 返回。
 
 失败统一表现为 `CONTEXT_WINDOW_EXCEEDED`：终止本次请求，不自动重复压缩、不静默删除
 历史、不更换模型，由用户缩短输入或开启新会话后重新发起。估算采用 UTF-8 字节上界口径，
@@ -146,7 +151,12 @@ if ((state.status === 'idle' || state.status === 'done' || state.status === 'err
 
 仓库的明确底层验证是 Browser `ContextManager` / Controller 契约测试、Java
 `DefaultContextCompactionProvider` / Starter 集成测试、五个 Web workspace 构建和 Starter
-Bundle 字节一致性；默认 Widget 本身就是 Demo 的可观察入口。
+Bundle 字节一致性；其中目录用例覆盖“记录 usage → JSON 保存/恢复 → 目录不变、新增工具、
+扩大定义”的组合路径。默认 Widget 本身就是 Demo 的可观察入口。
+
+压缩不删除 Tool Result 的 `execution` 执行事实。下一轮从完整历史恢复未知调用的核实约束，
+不从摘要文本判断是否可以重复执行；取消、正常聊天保存再恢复的组合回归见
+`controller.test.ts`。
 
 ## 安全与边界
 
@@ -155,6 +165,10 @@ Bundle 字节一致性；默认 Widget 本身就是 Demo 的可观察入口。
 当前 pre-release 唯一 Schema 使用 `model_context_json`，不读取或双写旧的
 `model_state_json`。本地开发数据库仍是旧结构时，停止应用并按当前 H2 / MySQL Schema 重建；
 生产宿主应在自己的 Flyway / Liquibase 中执行受控迁移。
+
+当前消息 JSON 的 Tool Result 必须带 `execution`，非空 usage 必须带 `toolDefinitionTokens`。
+缺字段的旧会话不会自动兼容；升级前备份，由宿主依据实际执行事实和原目录明确迁移。
+这次变更不新增数据库列。
 
 压缩失败不会提交部分摘要或候选状态，也不会继续发送可能溢出的模型请求。摘要固定使用当前
 模型；框架不重试、不换模型、不清空 Provider 私有状态。窗口配置错误会造成过早或过晚压缩，

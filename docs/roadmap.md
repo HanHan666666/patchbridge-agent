@@ -1,8 +1,8 @@
 # 路线图与当前进度
 
 - 文档状态：项目进度的唯一可信来源（Single Source of Truth）
-- 最近更新：2026-09-05
-- 当前里程碑：VA-01～VA-05 五项跨层缺口已完成修复并通过组合回归（同日审查登记、同日修复）；R1.8“可管理模型目标、按会话路由与显式切换”和 ADR-005 仍为 Proposed、待确认且未实施，管理面与新协议验证的依赖顺序需结合审查建议评审；R2/R3 保持暂缓；R0 rc.2 候选 `f4c7be4` 的历史预检和 tag `v0.1.0-rc.2` 保留
+- 最近更新：2026-09-06
+- 当前里程碑：VA-01～VA-05 已完成修复；2026-09-06 复审补齐未核实事实持久化、消息订阅内取消、目录增长预算与 MCP 版本密钥四项缺口，Java 8 与 Web 组合回归通过；R1.8“可管理模型目标、按会话路由与显式切换”和 ADR-005 仍为 Proposed、待确认且未实施，管理面与新协议验证的依赖顺序需结合审查建议评审；R2/R3 保持暂缓；R0 rc.2 候选 `f4c7be4` 的历史预检和 tag `v0.1.0-rc.2` 保留
 - 当前发布状态：Pre-release 源码候选；尚未发布 Maven Central 或 npm 公共包
 
 本文只回答三个问题：**已经实现了什么、接下来做什么、哪些事情当前不做**。
@@ -136,7 +136,7 @@ Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Too
 路线按“先把当前产品做完整，再扩大协议和生态面”的原则推进。后一个里程碑不会因为已有
 预留类型而被视为已经开始。
 
-### 当前审查补项 — 跨层一致性（已修复，2026-09-05 登记并于同日完成修复）
+### 当前审查补项 — 跨层一致性（已修复，2026-09-05 登记，2026-09-06 完成后续复审修复）
 
 审查报告记录的五项跨层缺口已全部修复。保留 Browser Agent、无后端 Agent Runtime 状态与
 宿主策略 Port 的既有方向；原始事实、复现步骤与建议设计见
@@ -145,11 +145,11 @@ Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Too
 
 | 编号 | 状态 | 修正范围 | 关闭证据摘要 |
 | --- | --- | --- | --- |
-| VA-01 | ✅ 已修复 | 后端动态 Tool 发现与调用的版本一致性 | `ToolDefinition.version`（MCP 为路由配置+定义内容的确定性 SHA-256，多实例一致）贯穿 GET /ai/tools 与 POST /ai/tools/call；Registry 先于授权校验版本，MCP 在实际路由的 ServerState 上复核（收敛调用中配置切换竞态）；过期引用返回 409 `TOOL_VERSION_MISMATCH`；权限撤销、工具停用与 Server 启停仍逐次判定。测试：`DefaultToolRegistryTest`（版本一致/过期/免检边界）、`McpToolRegistryVersionTest`（endpoint 更新、远端 Schema 变化、凭据轮换不失效、工具下线、双实例确定性）、Starter 集成测试（HTTP 409）、Browser `toolRegistry.test.ts`（快照闭包绑定版本、HTTP body 携带 version） |
+| VA-01 | ✅ 已修复 | 后端动态 Tool 发现与调用的版本一致性 | `ToolDefinition.version` 贯穿发现和调用，Registry 先于授权校验版本，MCP 在实际路由的同一 ServerState 上复核；过期返回 409 `TOOL_VERSION_MISMATCH`。版本覆盖路由、全部认证主体、定义和权限映射，改用独立共享密钥的 HMAC-SHA-256，避免公开凭据摘要成为离线猜测校验器；多实例必须配置相同 `mcp.tool-version-key`，无默认密钥或旧密钥兼容。测试：`DefaultToolRegistryTest`、`McpToolRegistryVersionTest`（endpoint、Schema、凭据、租户、用户名变化拒绝旧引用；同密钥跨实例一致；密钥轮换、非法密钥与编码边界）、Starter HTTP 409、Browser 快照与请求体。配置、Global MCP 指南和 Demo 启动入口已同步 |
 | VA-02 | ✅ 已修复 | Controller 首轮持久化的完整快照与归属 | `persistRound` 在首个异步操作前固定完整保存命令（messages、modelContext、目标会话、revision），`create()` 返回后、写请求前检查执行归属；创建挂起期间的导航/新建空会话/释放 Controller 均不再发出写请求。测试：`controller.test.ts` 四个 VA-02 用例（导航/新会话/释放/创建失败，断言保存体与 UI 状态） |
-| VA-03 | ✅ 已修复 | 取消或失败后的工作上下文与下一轮输入 | Runtime 跟踪未闭合 Tool Call，取消/失败终态按事实补写记录：未执行（含等待确认）记“未执行”、已发出记“结果未知”并要求用户核实、结果超限记“超限未回填”；已完成调用保留真实结果。取消路径在代次仍有效时发布终态消息，Controller 先取消后作废迟到结果。测试：`runtime.test.ts` 五个 VA-03 用例（含下一轮出站消息配对契约校验）、`controller.test.ts` 端到端（确认前取消→再发送，第二次模型输入严格配对且 Tool 执行次数为零，Call Trace 校验通过） |
+| VA-03 | ✅ 已修复 | 取消或失败后的工作上下文与下一轮输入 | Tool Result 必填 `execution`，区分 completed、not-executed、unknown、result-omitted。Runtime 从完整历史重建未核实约束，不再依赖 Controller 内存集合；保存、恢复、压缩后同名 Tool 仍须人工核实，拒绝不解除，真实结果才解除。取消/失败先关闭执行门再同步交付终态快照，Controller 作废代次前接收最终消息；重入取消不重复通知，其他订阅者不再收到旧快照，终态监听器失败明确拒绝 result。测试：`runtime.test.ts`（真实结果保留、确认/执行中取消、拒绝后约束保留、压缩前缀仍需核实、终态回调异常）；`controller.test.ts`（取消→普通聊天保存→恢复→确认→再次恢复、实际消息订阅内取消与下一轮配对，含 Call Trace）；Conversation Browser HTTP、Java 值映射、Starter HTTP 与 JDBC JSON 往返 |
 | VA-04 | ✅ 已修复 | Java 注解 Tool 的未知异常分类 | `AnnotatedToolProvider` 只保留两个失败通道：显式返回 `ToolCallResult.ofError(...)` 为业务失败（继续循环）；方法抛出的任何异常脱敏为 `ToolExecutionException` 终止本轮（500 `TOOL_FAILED`，后续模型调用为零），完整详情只写服务端日志；AOP/事务经宿主代理不变。测试：`AnnotatedToolProviderTest`（未知异常脱敏终止、显式 ofError 继续、框架异常同样脱敏） |
-| VA-05 | ✅ 已修复 | 正常请求、摘要请求与压缩后的最终窗口检查 | 配置新增派生值 `reservedOutputTokens`（默认窗口 10%，可覆盖，启动期校验）；`ContextManager.compact()` 拒绝装不下的压缩结果，`prepareForModelCall` 对最终出站输入执行预算检查（工作消息 + 本轮 Tool 定义 + 输出预留 ≤ 窗口 − 输出预留；有 Provider 基线用基线，首次输入用估算）；服务端 `DefaultContextCompactionProvider` 对摘要请求执行同一预算。超限 `CONTEXT_WINDOW_EXCEEDED` 明确失败、不提交检查点、不删历史、不重试、不换模型。测试：`contextManager.test.ts` 四个 VA-05 用例、`DefaultContextCompactionProviderTest`（摘要超限调用前失败）、`ContextCompactionSettingsTest`、`contextCompactionClient.test.ts`。已知限制：UTF-8 字节上界对真实模型/图片/各协议的估算边界验证属后续范围（审查报告 §9.4 已记录） |
+| VA-05 | ✅ 已修复 | 正常请求、摘要请求与压缩后的最终窗口检查 | `reservedOutputTokens` 由服务端明确派生；`ContextManager` 统一压缩及最终输入预算，`ModelContextUsage.toolDefinitionTokens` 必填并随会话恢复。Provider 基线覆盖的目录不重复计量，本次只补计目录增长的差额；estimated 基线只覆盖消息，目录基线为 0；首次估算完整输入。服务端摘要估算覆盖全部块（含 ReasoningBlock），专用异常映射 413 `CONTEXT_WINDOW_EXCEEDED` 并写审计；超限不提交检查点、不删历史、不重试、不换模型。测试：`contextManager.test.ts`（Provider 基线保存/恢复后目录不变、新增、扩大，首次/estimated/压缩后超限）；Java Provider/Settings、Starter HTTP 413、Conversation HTTP/JDBC 目录基线往返。UTF-8 估算对真实协议/图片的边界验证仍属后续范围 |
 
 共同验收条件：
 
@@ -161,10 +161,33 @@ Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Too
 - 完成后逐项更新本表与受影响能力状态；本次审查的历史复现结果和 rc.2 发布证据保持原样。
 
 审查当日代码基线 `d2a787b` 的现有回归为 Java 8 **248 tests**、Web **230 tests** 全部通过；
-额外最小复现确认了上述问题。修复后（同日）回归为 Java 8 全 Reactor **262 tests**、
-Web 五包 **248 tests** 全部通过，五个 Browser workspace 构建成功，四个 Starter 内嵌
-Bundle 与源码构建产物一致；上述逐项测试即本表“关闭证据”。真实外部服务联调、真实宿主
-接入、容量压测与完整候选预检仍不属于本轮验证范围。
+额外最小复现确认了上述问题。首轮修复（d815ed8）时曾声称“Java 8 全 Reactor 262 tests”
+通过，经复核该验证实际运行在默认 JDK 上、声明不成立（新测试使用了 Java 8 不支持的
+`String.repeat`）；第二轮按复审意见重开 VA-01/VA-03/VA-05 补齐组合场景修复，并以真实
+Corretto 8（1.8.0_462）`mvn clean test` 重验：Java 8 全 Reactor **267 tests**、Web 五包
+**256 tests** 全部通过，五个 Browser workspace 构建成功，四个 Starter 内嵌 Bundle 与
+源码构建产物一致。这些数字保留为第二轮历史验证记录，后续复审仍发现下述组合缺口，
+不能据此认为全部边界已覆盖。
+
+第二轮历史修复范围：VA-01 版本摘要纳入全部认证主体（凭据轮换/租户切换拒绝
+旧引用）；VA-03 Runtime 内部收敛先于外部发布（三类取消重入场景）+ 未解决状态的运行时
+表达与强制人工核实约束；VA-05 估算器补 `ReasoningBlock`、预算检查按 usage 来源区分
+工具目录计量、摘要超限补齐 413 稳定错误映射、Java 8 兼容辅助。
+
+2026-09-06 后续复审修复：未核实执行事实通过 `ToolResultBlock.execution` 随会话持久化；
+取消先关闭执行门再同步交付最终消息，包含 Controller 多订阅者重入；目录预算保存并补计
+`toolDefinitionTokens` 增长差额；MCP 改为独立共享密钥的 HMAC-SHA-256。删除前一轮新增的
+Controller 内存集合和 Engine 输入/结果集合接口，不保留双份状态或兼容分支。
+
+本轮最终验证：Corretto 8（1.8.0_462）`mvn clean test` 全 Reactor **273 tests**，
+Web 五包 **260 tests**（Agent 210、WebMCP 6、Widget 21、Inspector 2、Call Trace 21），
+均为零失败；五包构建、四份 Starter Bundle 字节一致性和文档链接检查通过。
+真实外部服务联调、真实宿主接入、容量压测与完整候选预检仍不属于本轮验证范围。
+
+升级约束：启用默认 MCP Registry 必须注入 `mcp.tool-version-key`（独立随机 32 字节、
+标准 Base64、多实例共享）；旧会话缺 `execution` 或 `toolDefinitionTokens` 会明确拒绝，
+需备份后由宿主按真实事实与原目录显式迁移。无数据库列变更，不自动将未知历史标为完成。
+配置、HTTP/Runtime 契约、压缩/Global MCP 指南、架构/ADR、README/Quickstart 与 Demo 已同步。
 
 后续顺序建议：先补齐五项边界，再验证真实存量宿主接入成本，并尽早用最小目标解析与第二种
 真实协议验证 Provider 抽象；模型 Admin/JDBC 管理根据明确需求推进。这是本次登记的评审
@@ -549,6 +572,8 @@ Prompts、Tasks、Sampling、Vault/KMS 默认实现也不在当前版本范围�
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-09-06 | 修复后续复审四项缺口：Tool Result 新增必填 execution，删除 Controller/Engine 临时集合协议，从完整历史恢复人工核实约束，覆盖取消后普通聊天保存与加载、拒绝和压缩前缀；Runtime 关闭执行门后同步交付最终消息，Controller 订阅重入停止旧快照广播，异常回调不会使 result 挂起；usage 新增必填 toolDefinitionTokens，保存基线覆盖目录、只计本轮增长差额；MCP 无密钥凭据摘要改为独立共享密钥 HMAC-SHA-256，补密钥配置、轮换与非法值验证。同步 Browser/Java/HTTP/JDBC 严格契约、指南、架构/ADR、Demo 与启动说明；Corretto 8 干净全 Reactor 273 tests、Web 五包 260 tests、五包构建和四份 Bundle 字节一致通过；旧会话迁移与密钥部署条件明确记录，真实宿主仍待选定 |
+| 2026-09-05 | 按复审意见修复首轮修复引入或未覆盖的 7 项问题，重开 VA-01/VA-03/VA-05 补齐组合场景后重新关闭：① Java 8 干净构建失败（测试使用 `String.repeat`），修正为 StringBuilder 辅助并披露此前“262 tests”验证实际运行在默认 JDK、声明不成立；② `ModelInputEstimator` 补 `ReasoningBlock` 计量，含思考块的合法历史可正常压缩且计入摘要预算；③ MCP 版本摘要纳入全部认证主体（凭据轮换/静态 Header 租户切换/Basic 用户名变化产生新版本并拒绝旧引用），修正“凭据不参与”的旧表述；④ 最终预算检查按 usage 来源区分基线覆盖：`provider` 基线不重复叠加工具目录，`estimated` 基线叠加本轮 Tool 定义；⑤ 摘要超限改抛 `ContextWindowExceededException` 并补齐 HTTP 映射（`ContextCompactionController` 纳入统一异常处理，413 `CONTEXT_WINDOW_EXCEEDED`）与审计错误码；⑥ Runtime 改为先完成内部状态转换再向外发布：未闭合跟踪提前到 Assistant 消息对外可见前、Tool 结果先收敛再发布、取消/失败终态无条件发布一致快照（发布重入安全），订阅/Hook 回调中取消不再破坏工具消息配对；⑦ “结果未知”运行时化：`AgentRunInput.unresolvedToolNames` + `AgentExecution.unresolvedToolCallNames()` + 中断 `reason` 字段，未核实 Tool 强制人工确认（即使只读），真实结果落地解除、拒绝不解除、会话切换清空，Widget 展示核实原因。同步 Runtime 契约、错误码、HTTP 契约、压缩指南；以真实 Corretto 8 重验 Java 8 全 Reactor 267 tests、Web 五包 256 tests、五包构建与四 Bundle 一致通过 |
 | 2026-09-05 | 修复审查登记的 VA-01～VA-05 五项跨层缺口：后端动态 Tool 新增定义/路由版本引用并贯穿发现与调用（MCP 内容确定性摘要、双实例一致、过期引用 409 `TOOL_VERSION_MISMATCH`）；Controller 首轮持久化固定完整保存命令并在写请求前校验执行归属；Runtime 取消/失败终态按事实补写 Tool 记录（未执行/结果未知/超限未回填）并保证下一轮输入严格配对；Java 注解 Tool 异常分类收敛为显式 ofError=业务失败、抛异常=脱敏终止；上下文配置新增 `reservedOutputTokens`，Browser 最终出站输入与服务端摘要请求执行统一窗口预算检查（`CONTEXT_WINDOW_EXCEEDED` 明确失败、保留完整历史）。同步 ToolRegistry/ToolProvider/ToolInvocationPipeline 签名、HTTP 契约（tools/call version、model/config reservedOutputTokens）、错误码、Runtime 契约、配置参考、压缩/Java 工具指南、ADR-001/003/004 与架构总览；Java 8 全 Reactor 262 tests、Web 五包 248 tests、五包构建与四 Bundle 同步通过；真实协议联调、宿主接入与估算边界真实验证仍属后续范围 |
 | 2026-09-05 | 记录代码基线 `d2a787b` 的愿景与实现审查：保留 Browser Runtime/Java Port/Provider 主架构；登记 VA-01～VA-05 的动态 Tool 版本、首轮保存、取消后继续、Java 异常分类和压缩预算缺口，相关能力调整为部分完成；Java 8 248、Web 230 现有测试通过但额外复现仍确认问题；提出真实宿主接入、第二协议与模型管理面顺序建议，R1.8/ADR-005 仍为 Proposed；新增架构审查分类并同步文档中心、架构总览和 Runtime Reference，校正显式状态重置的待实施表述；只改文档，不改产品代码、Schema 或历史 rc.2 证据 |
 | 2026-08-29 | 登记 R1.8“可管理模型目标、按会话路由与显式切换”为 Proposed、待确认且未实施：基于当前单 Provider 装配、Conversation/ModelContext、上下文压缩、Admin/JDBC 配置模式及 PI 当前源码完成技术方案和 ADR-005 初稿；推荐用 `ModelTargetRef`、统一 Catalog/Router、JDBC 单一配置源和显式 handoff，区分 enabled/default/current，删除任意 `ModelRequest.model` 与旧 properties 单模型路径；切换保留完整历史和文本 checkpoint、清除私有 ModelState、不兼容内容明确失败；R2/R3 调整为接入同一 Router；本次只修改规划文档，不声称端点、UI 或运行时能力已实现 |

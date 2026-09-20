@@ -71,6 +71,7 @@ export function testContextManager(): ContextManager {
           usage: Object.freeze({
             totalTokens: usage.totalTokens,
             source: 'provider' as const,
+            toolDefinitionTokens: 0,
             measuredThroughMessageId: responseMessage.id,
           }),
         }),

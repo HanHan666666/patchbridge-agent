@@ -305,6 +305,7 @@ function runModelContext(): ReturnType<typeof testModelContext> {
     usage: Object.freeze({
       totalTokens: 120,
       source: 'provider' as const,
+      toolDefinitionTokens: 0,
       measuredThroughMessageId: null,
     }),
   });
@@ -381,6 +382,7 @@ function compactableModelContext(): ReturnType<typeof testModelContext> & {
     usage: Object.freeze({
       totalTokens: 900,
       source: 'provider' as const,
+      toolDefinitionTokens: 0,
       measuredThroughMessageId: 'assistant-recent',
     }),
   });
@@ -605,6 +607,7 @@ describe('DefaultAgentController', () => {
       usage: Object.freeze({
         totalTokens: 120,
         source: 'estimated' as const,
+        toolDefinitionTokens: 0,
         measuredThroughMessageId: 'assistant-recent',
       }),
     });
@@ -1150,4 +1153,134 @@ describe('DefaultAgentController', () => {
     const traces = controller.getCallTraceSource().snapshot().traces;
     expect(traces.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('P1-1：取消后正常聊天保存并恢复会话，未知调用仍强制核实，真实结果才解除', async () => {
+    const model = new ScriptedControllerModel();
+    let sequence = 0;
+    const runtime = new DefaultAgentRuntime(model, {
+      limits: RUNTIME_LIMITS,
+      contextManager: testContextManager(),
+      createId: kind => `${kind}-${++sequence}`,
+    });
+    const engine = new FakeEngine();
+    const conversations = new FakeConversationClient();
+    const tools = new DefaultToolRegistry();
+    let executed = 0;
+    // 第一轮的执行挂起在结果返回前，取消时才会真实产生“结果未知”事实。
+    let releaseQuery: (() => void) | null = null;
+    const queryGate = new Promise<void>(resolve => {
+      releaseQuery = resolve;
+    });
+    // 只读工具：修复前取消后的重复执行完全绕开人工确认（工具累计 2 次、确认 0 次）。
+    tools.register({
+      name: 'page.query',
+      description: '查询设备状态',
+      inputSchema: { type: 'object' },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        requireConfirmation: false,
+      },
+      execute: () => {
+        executed += 1;
+        return queryGate.then(() => '已查询');
+      },
+    });
+    const controller = new DefaultAgentController({
+      engine: runtime,
+      conversations,
+      tools,
+      contextManager: testContextManager(),
+    });
+
+    // 第一轮：查询已发出但执行被用户取消，工具结果未知。
+    model.scripts.push(scriptedToolUse('call-1', 'page.query'));
+    const first = controller.sendMessage('第一轮查询');
+    await vi.waitFor(() => expect(executed).toBe(1));
+    controller.abort();
+    await first;
+    releaseQuery?.();
+    expect(controller.getState().runOutcome).toEqual({ type: 'cancelled' });
+    expect(JSON.stringify(controller.getState().messages)).toContain('结果未知');
+
+    // 普通聊天正常结束时会全量保存历史，必须连同未知事实一起保存并恢复。
+    model.scripts.push(scriptedText('可以继续讨论'));
+    await controller.sendMessage('先聊一下别的');
+    const saved = conversations.saved.at(-1)!;
+    expect(saved.body.context.messages.flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', execution: 'unknown' }),
+    );
+    conversations.getImpl = async id => ({
+      conversation: conversation(id, saved.body.revision + 1),
+      context: JSON.parse(JSON.stringify(saved.body.context)),
+    });
+    await controller.loadConversation(saved.id);
+
+    // 第二轮：模型再次提出同一操作——必须先经过人工核实，不允许直接执行。
+    model.scripts.push(scriptedToolUse('call-2', 'page.query'));
+    model.scripts.push(scriptedText('查询完成'));
+    const second = controller.sendMessage('第二轮再查一次');
+    await vi.waitFor(() =>
+      expect(controller.getState().pendingConfirmation).not.toBeNull());
+    expect(executed).toBe(1);
+    controller.approveTool();
+    await second;
+    expect(executed).toBe(2);
+    expect(controller.getState().runOutcome).toEqual({
+      type: 'completed',
+      stopReason: 'end-turn',
+    });
+
+    // 再次恢复含真实结果的历史，同一工具不再被旧未知记录阻断。
+    const resolved = conversations.saved.at(-1)!;
+    conversations.getImpl = async id => ({
+      conversation: conversation(id, resolved.body.revision + 1),
+      context: JSON.parse(JSON.stringify(resolved.body.context)),
+    });
+    await controller.loadConversation(resolved.id);
+    model.scripts.push(scriptedToolUse('call-3', 'page.query'), scriptedText('再次查询完成'));
+    const third = controller.sendMessage('第三轮');
+    await vi.waitFor(() => expect(executed).toBe(3));
+    await third;
+    expect(controller.getState().pendingConfirmation).toBeNull();
+  });
+  it('消息订阅中同步取消时最终结果配对，其他订阅者和下一轮都不得收到悬空调用', async () => {
+    const model = new ScriptedControllerModel();
+    let sequence = 0;
+    const callTrace = new CallTraceStore();
+    const runtime = new DefaultAgentRuntime(model, {
+      limits: RUNTIME_LIMITS, contextManager: testContextManager(), hooks: [callTrace],
+      createId: kind => `${kind}-${++sequence}`,
+    });
+    const tools = new DefaultToolRegistry();
+    const execute = vi.fn(() => '完成');
+    tools.register({ name: 'page.query', description: '查询', inputSchema: { type: 'object' }, execute });
+    const controller = new DefaultAgentController({ engine: runtime, tools, callTrace,
+      conversations: new FakeConversationClient(), contextManager: testContextManager() });
+    const unsubscribe = controller.subscribe(state => {
+      if (state.runOutcome == null && state.messages.some(message =>
+        message.blocks.some(block => block.type === 'tool-call'))) {
+        controller.abort();
+      }
+    });
+    const observed: AgentState[] = [];
+    controller.subscribe(state => observed.push(state));
+    model.scripts.push(scriptedToolUse('cancel-call', 'page.query'));
+    await controller.sendMessage('查询');
+    unsubscribe();
+    const blocks = controller.getState().messages.flatMap(message => message.blocks);
+    expect(blocks.filter(block => block.type === 'tool-result')).toEqual([
+      expect.objectContaining({ callId: 'cancel-call', execution: 'not-executed' }),
+    ]);
+    expect(observed.at(-1)?.messages).toEqual(controller.getState().messages);
+    expect(execute).not.toHaveBeenCalled();
+    model.scripts.push(scriptedText('已跳过'));
+    await controller.sendMessage('继续');
+    expect(model.requests[1].flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', callId: 'cancel-call', execution: 'not-executed' }),
+    );
+    controller.dispose();
+  });
+
 });

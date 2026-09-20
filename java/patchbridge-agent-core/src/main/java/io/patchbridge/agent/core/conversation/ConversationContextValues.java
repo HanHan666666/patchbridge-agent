@@ -150,14 +150,16 @@ public final class ConversationContextValues {
                 "context.modelContext.usage",
                 "totalTokens",
                 "source",
-                "measuredThroughMessageId");
+                "measuredThroughMessageId",
+                "toolDefinitionTokens");
         return new ModelContextUsage(
                 requireNonNegativeLong(usage.get("totalTokens"), "usage.totalTokens"),
                 ModelContextUsage.Source.fromWireValue(
                         requireText(usage.get("source"), "usage.source")),
                 requireNullableText(
                         usage.get("measuredThroughMessageId"),
-                        "usage.measuredThroughMessageId"));
+                        "usage.measuredThroughMessageId"),
+                requireNonNegativeLong(usage.get("toolDefinitionTokens"), "usage.toolDefinitionTokens"));
     }
 
     /** 把可空模型上下文用量转换为稳定 JSON 值。 */
@@ -167,6 +169,7 @@ public final class ConversationContextValues {
         }
         Map<String, Object> value = new LinkedHashMap<String, Object>();
         value.put("totalTokens", usage.getTotalTokens());
+        value.put("toolDefinitionTokens", usage.getToolDefinitionTokens());
         value.put("source", usage.getSource().getWireValue());
         value.put("measuredThroughMessageId", usage.getMeasuredThroughMessageId());
         return value;
@@ -286,12 +289,14 @@ public final class ConversationContextValues {
                     requireObject(block.get("input"), path + ".input"));
         }
         if (BlockType.TOOL_RESULT.getWireValue().equals(type)) {
-            requireFields(block, path, "type", "callId", "name", "status", "content");
+            requireFields(block, path, "type", "callId", "name", "status", "execution", "content");
             return new ToolResultBlock(
                     requireText(block.get("callId"), path + ".callId"),
                     requireText(block.get("name"), path + ".name"),
                     ToolResultStatus.fromWireValue(
                             requireText(block.get("status"), path + ".status")),
+                    ToolResultBlock.Execution.fromWireValue(
+                            requireText(block.get("execution"), path + ".execution")),
                     fromToolResultContentValue(block.get("content"), path + ".content"));
         }
         throw new IllegalArgumentException("不支持的 ContentBlock 类型: " + type);
@@ -327,6 +332,7 @@ public final class ConversationContextValues {
                 value.put("callId", result.getCallId());
                 value.put("name", result.getName());
                 value.put("status", result.getStatus().getWireValue());
+                value.put("execution", result.getExecution().getWireValue());
                 value.put("content", toTextBlocksValue(result.getContent()));
                 return value;
             default:

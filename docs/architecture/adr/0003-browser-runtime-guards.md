@@ -184,6 +184,15 @@ Promise 上，因此事件数量不能线性累积停止信号订阅。
 `AgentRunOutcome` 或 `result` rejection 唯一表达。`cancel()` 保持幂等；Execution 完成后再取消不改变结果。
 超时使用 `AGENT_EXECUTION_TIMEOUT`，不伪装成用户取消。
 
+取消和失败在关闭执行门后同步交付一次终态消息快照：`execution` 区分 `completed`、
+`not-executed`、`unknown`、`result-omitted`。已完成结果保留，尚未执行或未取得结果的
+调用按真实事实补齐；重入取消不会再次交付，监听器抛错通过 `result` 拒绝传播。
+Controller 接收这份快照后才作废执行代次，广播期间状态已推进则停止继续广播旧快照。
+
+未知结果的核实约束从完整历史重建，随完整会话保存和恢复；即使压缩已经把相关调用移出
+模型输入，仍须人工核实。拒绝不解除，批准且取得本次真实结果后才解除同名约束。此状态
+属于聊天历史的执行事实，不是持久化 Execution 检查点，详见[Runtime 契约](../../reference/runtime-contracts.md)。
+
 `message-stop` 仍是单次模型消息的封闭边界；已在超时前完整消费并校验的消息不会被迟到的
 reader 清理错误推翻。
 
@@ -197,7 +206,7 @@ reader 清理错误推翻。
 | `ToolCallResult.isError === true` | 宿主明确判定可交给模型理解的业务失败 | 生成 error Tool Result，继续 Agent Loop |
 | 结果不是精确 `{ toolCallId, content, isError }`，字段类型错误或 `toolCallId` 与请求不一致 | Adapter/协议违约 | 以 `MODEL_PROTOCOL_ERROR` 终止，不发布 Tool Result |
 | Promise rejection / throw | Adapter、Interceptor、协议或未预期基础设施失败 | 终止 Execution，原异常继续传播 |
-| Abort 或终态门闩已关闭 | 取消/超时边界 | 不生成 Tool Result |
+| Abort 或终态门闩已关闭 | 取消/超时边界 | 不接受迟到业务结果；终态只按已知执行事实补齐记录 |
 
 如果宿主需要把某类明确异常转换为模型可见的业务失败，应当在 Tool Adapter 或已有
 `ToolInterceptor` 中显式返回 `ToolCallResult`。Runtime 不再把所有未知异常包装成

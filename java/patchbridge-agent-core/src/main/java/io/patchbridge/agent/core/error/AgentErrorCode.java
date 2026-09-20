@@ -31,6 +31,12 @@ public final class AgentErrorCode {
     /** 模型网关失败（上游不可达、认证失败、流中断）。 */
     public static final String MODEL_FAILED = "MODEL_FAILED";
 
+    /**
+     * 模型输入超过“窗口 − 输出预留”预算（Browser 最终检查或服务端摘要请求超限）。
+     * 浏览器应终止本次请求并保留完整历史，由用户调整输入后重新发起。
+     */
+    public static final String CONTEXT_WINDOW_EXCEEDED = "CONTEXT_WINDOW_EXCEEDED";
+
     /** 当前可信 owner 范围内找不到指定会话。 */
     public static final String CONVERSATION_NOT_FOUND = "CONVERSATION_NOT_FOUND";
 

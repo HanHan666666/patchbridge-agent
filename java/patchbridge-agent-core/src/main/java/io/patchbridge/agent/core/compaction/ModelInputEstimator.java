@@ -4,6 +4,7 @@ import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.core.model.ContentBlock;
 import io.patchbridge.agent.core.model.ImageBlock;
 import io.patchbridge.agent.core.model.ImageSource;
+import io.patchbridge.agent.core.model.ReasoningBlock;
 import io.patchbridge.agent.core.model.TextBlock;
 import io.patchbridge.agent.core.model.ToolCallBlock;
 import io.patchbridge.agent.core.model.ToolResultBlock;
@@ -41,6 +42,9 @@ final class ModelInputEstimator {
     private static int estimateBlock(ContentBlock block) {
         if (block instanceof TextBlock) {
             return utf8Length(((TextBlock) block).getText());
+        }
+        if (block instanceof ReasoningBlock) {
+            return utf8Length(((ReasoningBlock) block).getText());
         }
         if (block instanceof ImageBlock) {
             ImageSource source = ((ImageBlock) block).getSource();

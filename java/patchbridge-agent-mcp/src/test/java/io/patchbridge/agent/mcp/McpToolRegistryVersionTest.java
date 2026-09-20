@@ -29,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class McpToolRegistryVersionTest {
 
+    /** 仅用于测试的固定版本密钥哨兵，生产部署必须注入随机共享密钥。 */
+    private static final String TOOL_VERSION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
     private final AiRequestContext ctx = new AiRequestContext(
             UserContext.builder().userId("u1").build(), "trace-1", null, null, null);
 
@@ -54,7 +57,7 @@ class McpToolRegistryVersionTest {
     void staleVersionCannotExecuteNewTargetAfterEndpointUpdate() throws Exception {
         RecordingClient client = new RecordingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), client, "mcp");
+                servers(config("https://server-a.example/mcp")), client, "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
         ToolDefinition discovered = registry.list().get(0);
         String staleVersion = discovered.getVersion();
@@ -83,9 +86,9 @@ class McpToolRegistryVersionTest {
         RecordingClient clientA = new RecordingClient();
         RecordingClient clientB = new RecordingClient();
         McpToolRegistry instanceA = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), clientA, "mcp");
+                servers(config("https://server-a.example/mcp")), clientA, "mcp", TOOL_VERSION_KEY);
         McpToolRegistry instanceB = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), clientB, "mcp");
+                servers(config("https://server-a.example/mcp")), clientB, "mcp", TOOL_VERSION_KEY);
         instanceA.refreshAll();
         instanceB.refreshAll();
         String versionA = instanceA.list().get(0).getVersion();
@@ -98,14 +101,14 @@ class McpToolRegistryVersionTest {
                 "相同配置的独立实例必须得到相同版本，多实例校验不依赖内存快照");
     }
 
-    /** 凭据轮换不改变调用语义：版本引用保持不变，鉴权由远程 Server 把关。 */
+    /** 凭据轮换改变目标身份：版本引用必须更新，旧引用不得再触达远程。 */
     @Test
-    void credentialRotationDoesNotInvalidateVersion() {
+    void credentialRotationProducesNewVersion() throws Exception {
         RecordingClient client = new RecordingClient();
         McpServerConfig withOldToken = config("https://server-a.example/mcp");
         withOldToken.getAuth().setType(McpServerConfig.Auth.BEARER);
         withOldToken.getAuth().setToken("old-token");
-        McpToolRegistry registry = new McpToolRegistry(servers(withOldToken), client, "mcp");
+        McpToolRegistry registry = new McpToolRegistry(servers(withOldToken), client, "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
         String before = registry.list().get(0).getVersion();
 
@@ -114,9 +117,62 @@ class McpToolRegistryVersionTest {
         withNewToken.getAuth().setToken("new-token");
         registry.replaceAll(servers(withNewToken));
         registry.refreshAll();
+        String after = registry.list().get(0).getVersion();
 
-        assertEquals(before, registry.list().get(0).getVersion(),
-                "凭据值不参与版本计算，轮换凭据不应打散进行中的调用引用");
+        assertNotEquals(before, after,
+                "凭据决定目标身份，轮换凭据必须产生新的定义/路由版本");
+        assertThrows(ToolVersionMismatchException.class, () ->
+                registry.call("srv.action", before,
+                        Collections.<String, Object>emptyMap(), ctx));
+        assertEquals(0, client.callCount.get(), "旧身份的引用不得触达远程 Server");
+        registry.call("srv.action", after, Collections.<String, Object>emptyMap(), ctx);
+        assertEquals(1, client.callCount.get(), "新身份的引用按当前配置放行");
+    }
+
+    /** 审查复现：静态 Header 从租户 A 切到租户 B，旧引用必须失败而不是调到 B。 */
+    @Test
+    void staticHeaderTenantSwitchProducesNewVersion() {
+        RecordingClient client = new RecordingClient();
+        McpServerConfig tenantA = config("https://server-a.example/mcp");
+        tenantA.getAuth().setType(McpServerConfig.Auth.STATIC_HEADERS);
+        tenantA.getAuth().getHeaders().put("X-Tenant-Id", "tenant-a");
+        McpToolRegistry registry = new McpToolRegistry(servers(tenantA), client, "mcp", TOOL_VERSION_KEY);
+        registry.refreshAll();
+        String staleVersion = registry.list().get(0).getVersion();
+
+        McpServerConfig tenantB = config("https://server-a.example/mcp");
+        tenantB.getAuth().setType(McpServerConfig.Auth.STATIC_HEADERS);
+        tenantB.getAuth().getHeaders().put("X-Tenant-Id", "tenant-b");
+        registry.replaceAll(servers(tenantB));
+        registry.refreshAll();
+
+        assertThrows(ToolVersionMismatchException.class, () ->
+                registry.call("srv.action", staleVersion,
+                        Collections.<String, Object>emptyMap(), ctx));
+        assertEquals(0, client.callCount.get(), "租户 A 的旧引用不得把调用执行到租户 B");
+    }
+
+    /** Basic 认证的用户名变化同样属于目标身份变化，必须产生新版本。 */
+    @Test
+    void basicAuthUsernameChangeProducesNewVersion() {
+        RecordingClient client = new RecordingClient();
+        McpServerConfig userA = config("https://server-a.example/mcp");
+        userA.getAuth().setType(McpServerConfig.Auth.BASIC);
+        userA.getAuth().setUsername("user-a");
+        userA.getAuth().setPassword("shared-secret");
+        McpToolRegistry registry = new McpToolRegistry(servers(userA), client, "mcp", TOOL_VERSION_KEY);
+        registry.refreshAll();
+        String before = registry.list().get(0).getVersion();
+
+        McpServerConfig userB = config("https://server-a.example/mcp");
+        userB.getAuth().setType(McpServerConfig.Auth.BASIC);
+        userB.getAuth().setUsername("user-b");
+        userB.getAuth().setPassword("shared-secret");
+        registry.replaceAll(servers(userB));
+        registry.refreshAll();
+
+        assertNotEquals(before, registry.list().get(0).getVersion(),
+                "认证主体变化必须反映到版本引用");
     }
 
     /** 远端工具下线或被配置排除后，旧调用必须在快照查找处明确失败。 */
@@ -124,7 +180,7 @@ class McpToolRegistryVersionTest {
     void removedToolFailsExplicitlyAtSnapshotLookup() {
         RecordingClient client = new RecordingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), client, "mcp");
+                servers(config("https://server-a.example/mcp")), client, "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
         String version = registry.list().get(0).getVersion();
 
@@ -142,7 +198,7 @@ class McpToolRegistryVersionTest {
     void nullVersionReferenceIsRejectedForDynamicTools() {
         RecordingClient client = new RecordingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), client, "mcp");
+                servers(config("https://server-a.example/mcp")), client, "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
 
         assertThrows(ToolVersionMismatchException.class, () ->
@@ -156,7 +212,7 @@ class McpToolRegistryVersionTest {
     void remoteSchemaChangeProducesNewVersion() throws Exception {
         RecordingClient client = new RecordingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                servers(config("https://server-a.example/mcp")), client, "mcp");
+                servers(config("https://server-a.example/mcp")), client, "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
         String before = registry.list().get(0).getVersion();
 
@@ -170,6 +226,49 @@ class McpToolRegistryVersionTest {
                         Collections.<String, Object>emptyMap(), ctx));
         registry.call("srv.action", after, Collections.<String, Object>emptyMap(), ctx);
         assertEquals(1, client.callCount.get());
+    }
+
+    /** 未知共享密钥时，即使猜中全部路由与密码也不能本地生成已发布版本；轮换使旧引用失效。 */
+    @Test
+    void sharedVersionKeyIsRequiredAndRotationInvalidatesReferences() {
+        McpServerConfig config = config("https://server-a.example/mcp");
+        config.getAuth().setType(McpServerConfig.Auth.BASIC);
+        config.getAuth().setUsername("known-user");
+        config.getAuth().setPassword("guessable-password");
+        RecordingClient client = new RecordingClient();
+        McpToolRegistry original = new McpToolRegistry(servers(config), client, "mcp", TOOL_VERSION_KEY);
+        original.refreshAll();
+        String originalVersion = original.list().get(0).getVersion();
+        String otherKey = "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=";
+        McpToolRegistry rotated = new McpToolRegistry(servers(config), client, "mcp", otherKey);
+        rotated.refreshAll();
+        assertNotEquals(originalVersion, rotated.list().get(0).getVersion());
+        assertThrows(ToolVersionMismatchException.class, () -> rotated.call(
+                "srv.action", originalVersion, Collections.<String, Object>emptyMap(), ctx));
+        assertEquals(0, client.callCount.get());
+        for (String invalid : new String[] { null, "", "not-base64", "YWJj" }) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new McpToolRegistry(servers(config), client, "mcp", invalid));
+        }
+    }
+
+    /** 带换行的定义不能伪造相邻字段边界；对象键顺序则不改变语义。 */
+    @Test
+    void canonicalEncodingSeparatesFieldBoundariesAndSortsObjectKeys() {
+        McpToolVersions versions = new McpToolVersions(TOOL_VERSION_KEY);
+        McpServerConfig config = config("https://server-a.example/mcp");
+        Map<String, Object> schema = new LinkedHashMap<String, Object>();
+        schema.put("type", "object");
+        schema.put("description", "参数");
+        Map<String, Object> reversed = new LinkedHashMap<String, Object>();
+        reversed.put("description", "参数");
+        reversed.put("type", "object");
+        String first = versions.versionOf("srv", config, "action", "a\ndescription=b", "c",
+                schema, null, Collections.<String>emptyList());
+        assertNotEquals(first, versions.versionOf("srv", config, "action", "a", "b\ndescription=c",
+                schema, null, Collections.<String>emptyList()));
+        assertEquals(first, versions.versionOf("srv", config, "action", "a\ndescription=b", "c",
+                reversed, null, Collections.<String>emptyList()));
     }
 
     /** 可编程远程 Client：返回固定工具列表并记录实际收到的调用配置。 */

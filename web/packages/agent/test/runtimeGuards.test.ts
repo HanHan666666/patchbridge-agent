@@ -471,7 +471,12 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
     });
     expect(invoke).not.toHaveBeenCalled();
     expect(events.some(event => event.type === 'tool-call')).toBe(false);
-    expect(events.some(event => event.type === 'messages')).toBe(false);
+    // 失败终态会发布一次终局快照，但任何快照都不得包含半截稳定消息。
+    for (const event of events) {
+      if (event.type === 'messages') {
+        expect(event.messages).toEqual([]);
+      }
+    }
     expect(hooks.some(event => event.type === 'model-call-completed')).toBe(false);
   });
 
@@ -495,6 +500,7 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
           type: 'tool-result',
           callId: 'call-history',
           name: 'local.known',
+          execution: 'completed',
           status: 'success',
           content: [{ type: 'text', text: '历史结果' }],
         }],
@@ -567,7 +573,12 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
         retryable: false,
       });
     expect(model.calls).toHaveLength(1);
-    expect(events.some(event => event.type === 'messages')).toBe(false);
+    // 失败终态会发布一次终局快照，但超限输出不得形成任何稳定消息。
+    for (const event of events) {
+      if (event.type === 'messages') {
+        expect(event.messages).toEqual([]);
+      }
+    }
   });
 
   it('Tool 结果超限后不发布结果、不形成 Tool 消息也不调用下一次模型', async () => {
@@ -976,7 +987,7 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
     }
   });
 
-  it('model-call-completed Hook 推进时钟到 Deadline 后不得发布消息或成功', async () => {
+  it('model-call-completed Hook 推进时钟到 Deadline 后不得成功收敛', async () => {
     let currentTime = 0;
     const events: AgentExecutionEvent[] = [];
     const execution = runtime(new QueueModel([textResponse('已经封闭')]), {
@@ -992,7 +1003,13 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
     }).start(input(toolSnapshot([])), event => events.push(event));
 
     await expect(execution.result).rejects.toMatchObject({ code: 'AGENT_EXECUTION_TIMEOUT' });
-    expect(events.some(event => event.type === 'messages')).toBe(false);
+    // 失败终态发布与内部一致的终局快照：已封闭的 Assistant 正文如实可见。
+    for (const event of events) {
+      if (event.type === 'messages') {
+        expect(event.messages).toHaveLength(1);
+        expect(event.messages[0]).toMatchObject({ role: 'assistant' });
+      }
+    }
   });
 
   it('稳定 messages listener 推进时钟到 Deadline 后不得把 Execution 判为成功', async () => {
@@ -1009,7 +1026,13 @@ describe('DefaultAgentRuntime 生产级执行守卫', () => {
     });
 
     await expect(execution.result).rejects.toMatchObject({ code: 'AGENT_EXECUTION_TIMEOUT' });
-    expect(events.filter(event => event.type === 'messages')).toHaveLength(1);
+    // 一次正常快照加一次失败终局快照，两次内容都与稳定历史一致。
+    const committed = events.filter(event => event.type === 'messages');
+    expect(committed).toHaveLength(2);
+    for (const event of committed) {
+      expect(event.messages).toHaveLength(1);
+      expect(event.messages[0]).toMatchObject({ role: 'assistant' });
+    }
   });
 
   it('正文 delta listener 重入取消后不再发起额外 iterator.next', async () => {

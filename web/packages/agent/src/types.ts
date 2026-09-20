@@ -194,6 +194,8 @@ export interface ToolResultBlock {
   readonly name: string;
   /** 业务执行状态；框架级异常仍通过异常通道传播。 */
   readonly status: 'success' | 'error';
+  /** 持久化执行事实：真实结果、未执行、结果未知或结果超限未回填；不依赖提示文案判断。 */
+  readonly execution: 'completed' | 'not-executed' | 'unknown' | 'result-omitted';
   /** 保留 Tool 内容块边界，禁止在消息层拼成厂商专有结构。 */
   readonly content: readonly ToolResultContent[];
 }
@@ -234,6 +236,8 @@ export interface ContextCompactionCheckpoint {
 
 /** 模型工作上下文最近一次 token 计量。 */
 export interface ModelContextUsage {
+  /** 本基线所覆盖 Tool 定义的估算量；压缩产生的纯消息基线明确为 0。 */
+  readonly toolDefinitionTokens: number;
   /** Provider 报告或压缩后保守估算的工作上下文 token 总数。 */
   readonly totalTokens: number;
   /** provider 是上游精确用量，estimated 只允许用于成功压缩后的过渡快照。 */
@@ -383,6 +387,12 @@ export interface PendingConfirmation {
   readonly tool: ToolDefinition;
   /** 已完成 JSON 校验的调用参数。 */
   readonly arguments: JsonObject;
+  /**
+   * 触发确认的额外原因；与 ToolConfirmationInterrupt.reason 一致。
+   * `unverified-previous-invocation` 表示该 Tool 上一轮存在结果未核实的调用，
+   * View 应提示用户先核实，而不是默认这是危险操作确认。
+   */
+  readonly reason?: 'unverified-previous-invocation';
 }
 
 /** Browser 唯一状态源：纯数据、可快照、可测试，禁止放入 DOM / Promise / Client 实例。 */

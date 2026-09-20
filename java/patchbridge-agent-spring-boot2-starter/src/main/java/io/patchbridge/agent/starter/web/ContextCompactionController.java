@@ -7,6 +7,7 @@ import io.patchbridge.agent.core.compaction.ContextCompactionProvider;
 import io.patchbridge.agent.core.compaction.ContextCompactionRequest;
 import io.patchbridge.agent.core.compaction.ContextCompactionResult;
 import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
+import io.patchbridge.agent.core.compaction.ContextWindowExceededException;
 import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.error.AgentErrorCode;
 import io.patchbridge.agent.core.model.ModelState;
@@ -111,7 +112,7 @@ public class ContextCompactionController {
                     request,
                     startedAt,
                     false,
-                    AgentErrorCode.MODEL_FAILED,
+                    auditErrorCode(e),
                     e.getMessage());
             throw e;
         }
@@ -135,7 +136,9 @@ public class ContextCompactionController {
                                 request,
                                 startedAt,
                                 false,
-                                AgentErrorCode.MODEL_FAILED,
+                                cause instanceof RuntimeException
+                                        ? auditErrorCode((RuntimeException) cause)
+                                        : AgentErrorCode.MODEL_FAILED,
                                 cause.getMessage());
                         deferred.setErrorResult(cause);
                         return;
@@ -207,6 +210,13 @@ public class ContextCompactionController {
                 System.currentTimeMillis() - startedAt,
                 Integer.valueOf(request.getMessagesToSummarize().size()),
                 null);
+    }
+
+    /** 窗口预算超限有独立错误码语义，审计不得把所有同步失败都归为 MODEL_FAILED。 */
+    private static String auditErrorCode(RuntimeException e) {
+        return e instanceof ContextWindowExceededException
+                ? AgentErrorCode.CONTEXT_WINDOW_EXCEEDED
+                : AgentErrorCode.MODEL_FAILED;
     }
 
     /** CompletionStage 包装异常不属于对外错误语义。 */

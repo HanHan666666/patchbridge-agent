@@ -733,9 +733,13 @@ class PatchBridgeAgentElement extends HTMLElement {
       this.statusEl.hidden = false;
       const tool = confirmation.tool;
       const args = escapeHtml(JSON.stringify(confirmation.arguments, null, 2));
+      // 未核实原因来自 Runtime 的未解决状态：提示先核实，而不是默认危险操作。
+      const title = confirmation.reason === 'unverified-previous-invocation'
+        ? `⚠ 上一轮 ${escapeHtml(tool.title ?? tool.name)} 的执行结果未核实，请先确认后再继续`
+        : `⚠ 即将执行危险操作：<b>${escapeHtml(tool.title ?? tool.name)}</b>`;
       this.statusEl.innerHTML = `
         <div class="confirmation">
-          <div class="confirmation-title">⚠ 即将执行危险操作：<b>${escapeHtml(tool.title ?? tool.name)}</b></div>
+          <div class="confirmation-title">${title}</div>
           <div class="confirmation-args">${args}</div>
           <div class="confirmation-actions">
             <button class="primary" data-action="confirm-approve">允许执行</button>

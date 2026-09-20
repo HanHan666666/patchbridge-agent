@@ -38,6 +38,8 @@ Demo 不内置 Mock AI 或 Mock MCP 协议服务；模型与 MCP 调用都连接
 cd java
 # JDBC MCP 凭据密文密钥必须显式注入（生成：openssl rand -base64 32）
 export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
+# MCP 工具版本使用另一份独立密钥；多实例共享且重启后保持不变
+export PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY='<另行生成的 32 字节密钥的 Base64>'
 # 模型地址和名称必须显式配置；API Key 是否必需由目标网关决定
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
 export PATCHBRIDGE_AGENT_MODEL='your-model'
@@ -90,6 +92,7 @@ patchbridge-agent:
     api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY} # 环境变量注入，浏览器永远拿不到
     context-window-tokens: 128000 # 必须与所选模型真实窗口一致
   mcp:
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     # 默认 properties：配置只读，不与 JDBC 数据合并
     source: properties
     servers:
@@ -108,6 +111,7 @@ patchbridge-agent:
   admin:
     enabled: true
   mcp:
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     source: jdbc
     jdbc:
       # 严禁写死在仓库；解码后必须恰好 32 字节
@@ -129,8 +133,8 @@ patchbridge-agent:
 - `conversations.list-limit` 和 `audit.summary-max-length` 必须大于 0；
 - `audit.payload-mode` 只接受 `full`、`metadata-only`、`none`；
 - `mcp.source` 只接受 `properties` 或 `jdbc`，二者不合并；
-- `mcp.enabled=false` 时不装配默认 MCP Client、Store、Registry 或 Admin，也不要求 JDBC 加密密钥；
-- MCP 开启且 `source=jdbc` 时，32 字节 Base64 密钥是启动硬依赖。
+- `mcp.enabled=false` 时不装配默认 MCP Client、Store、Registry 或 Admin，也不要求版本密钥或 JDBC 加密密钥；
+- 默认 MCP Registry 开启时，`mcp.tool-version-key` 是启动硬依赖；`source=jdbc` 还需要独立的 `mcp.jdbc.encryption-key`，两者均为 32 字节标准 Base64。
 
 Starter 自有 JSON 请求同样使用严格字段契约。未知字段、缺少必填字段、非法 JSON、
 字段类型错误和非法 Admin 查询参数统一返回 `400 INVALID_ARGUMENT`，客户端不应依赖

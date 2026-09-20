@@ -4,6 +4,7 @@
  * <p>测试关注稳定 ContentBlock、本轮唯一 Tool 快照、ModelState 续接、有界循环、
  * Human-in-the-loop 和取消边界；不允许重新引入厂商 chunk 或历史消息兼容假设。
  */
+import { DefaultContextManager } from '../src/contextManager';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   Model,
@@ -30,6 +31,7 @@ import type {
   ModelState,
   ToolCallResult,
   ToolDefinition,
+  ToolResultBlock,
 } from '../src/types';
 import {
   TEST_MODEL_USAGE,
@@ -154,6 +156,27 @@ function baseInput(
   };
 }
 
+/** 用真实持久化块表达上一轮未知结果；文本刻意不带关键词，恢复不得解析提示文案。 */
+function unverifiedInput(snapshot: ToolRegistrySnapshot): AgentRunInput {
+  const input = baseInput(snapshot);
+  return {
+    ...input,
+    conversation: {
+      ...input.conversation,
+      messages: [
+        { id: 'old-call', role: 'assistant', blocks: [{
+          type: 'tool-call', callId: 'old-id', name: 'local.query', input: {},
+        }] },
+        { id: 'old-result', role: 'tool', blocks: [{
+          type: 'tool-result', callId: 'old-id', name: 'local.query',
+          status: 'error', execution: 'unknown', content: [{ type: 'text', text: '中止记录' }],
+        }] },
+        ...input.conversation.messages,
+      ],
+    },
+  };
+}
+
 /** 创建 ID 可预测的 Runtime，避免测试依赖随机 UUID。 */
 function createRuntime(model: Model, maxModelCalls = 4): DefaultAgentRuntime {
   const counters = { message: 0, interrupt: 0 };
@@ -266,6 +289,7 @@ describe('DefaultAgentRuntime', () => {
         usage: {
           totalTokens: TEST_MODEL_USAGE.totalTokens,
           source: 'provider',
+          toolDefinitionTokens: 0,
           measuredThroughMessageId: 'message-1',
         },
       },
@@ -333,6 +357,7 @@ describe('DefaultAgentRuntime', () => {
           type: 'tool-result',
           callId: 'call-1',
           name: 'local.device_get',
+          execution: 'completed',
           status: 'success',
           content: [{ type: 'text', text: '工具执行成功' }],
         }],
@@ -470,7 +495,12 @@ describe('DefaultAgentRuntime', () => {
       modelContext: testModelContext(),
       outcome: { type: 'cancelled' },
     });
-    expect(events.some(event => event.type === 'messages')).toBe(false);
+    // 取消会无条件发布一次与稳定历史一致的快照；任何快照都不得携带半截消息。
+    for (const event of events) {
+      if (event.type === 'messages') {
+        expect(event.messages).toEqual([]);
+      }
+    }
     expect(lifecycleEvents.some(event => event.type === 'model-call-started')).toBe(true);
     expect(lifecycleEvents.some(event => event.type === 'model-call-completed')).toBe(false);
   });
@@ -927,6 +957,7 @@ describe('DefaultAgentRuntime', () => {
       blocks: [{
         type: 'tool-result',
         callId: 'call-1',
+        execution: 'completed',
         status: 'success',
         content: [{ text: '工具执行成功' }],
       }],
@@ -1007,6 +1038,213 @@ describe('DefaultAgentRuntime', () => {
     });
   });
 
+  it('P1-4：Assistant 消息发布时取消，未执行 Tool Call 仍补写配对终态记录', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.restart', true)]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.restart'), textResponse('不应调用')];
+    const events: AgentExecutionEvent[] = [];
+    let execution: AgentExecution | null = null;
+    const counters = { message: 0, interrupt: 0 };
+    const runtime = new DefaultAgentRuntime(model, {
+      limits: testLimits(),
+      contextManager: testContextManager(),
+      hooks: [{
+        onEvent: event => {
+          // 审查复现：Hook 回调中同步取消，此刻 Assistant 消息刚稳定提交
+          if (event.type === 'model-call-completed') {
+            execution?.cancel();
+          }
+        },
+      }],
+      createId: kind => `${kind}-${++counters[kind]}`,
+    });
+    execution = runtime.start(baseInput(snapshot), event => events.push(event));
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'cancelled' });
+    expect(invocations).toHaveLength(0);
+    // Assistant Tool Call 之后必须紧跟明确的“未执行”记录，历史严格配对
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[1]).toMatchObject({
+      role: 'tool',
+      blocks: [{
+        type: 'tool-result',
+        callId: 'call-1',
+        status: 'error',
+        content: [{ text: expect.stringContaining('未执行') }],
+      }],
+    });
+    // 最终发布的 messages 快照与 result 稳定历史一致
+    const committed = events.filter(event => event.type === 'messages').at(-1);
+    expect(committed?.messages).toHaveLength(2);
+  });
+
+  it('P1-4：工具消息发布回调中取消，已收敛的真实结果不重复记录为结果未知', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query'), textResponse('不应调用')];
+    let execution: AgentExecution | null = null;
+    const runtime = createRuntime(model);
+
+    execution = runtime.start(baseInput(snapshot), event => {
+      // 审查复现：订阅回调里对含 Tool Result 的 messages 快照同步取消
+      if (event.type === 'messages'
+          && event.messages.some(message => message.role === 'tool')) {
+        execution?.cancel();
+      }
+    });
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'cancelled' });
+    expect(invocations).toHaveLength(1);
+    const callResults = result.messages
+      .flatMap(message => message.blocks)
+      .filter((block): block is ToolResultBlock =>
+        block.type === 'tool-result' && block.callId === 'call-1');
+    // 同一调用只允许出现一次真实成功结果，绝不同时携带“结果未知”记录
+    expect(callResults).toHaveLength(1);
+    expect(callResults[0]).toMatchObject({
+      status: 'success',
+      content: [{ text: '工具执行成功' }],
+    });
+  });
+
+  it('P1-4：完成 Hook 中取消，真实成功结果保留而不被改写为结果未知', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query'), textResponse('不应调用')];
+    let execution: AgentExecution | null = null;
+    const counters = { message: 0, interrupt: 0 };
+    const runtime = new DefaultAgentRuntime(model, {
+      limits: testLimits(),
+      contextManager: testContextManager(),
+      hooks: [{
+        onEvent: event => {
+          // 审查复现：结果已真实返回，取消发生在完成 Hook 回调中
+          if (event.type === 'tool-call-completed') {
+            execution?.cancel();
+          }
+        },
+      }],
+      createId: kind => `${kind}-${++counters[kind]}`,
+    });
+    execution = runtime.start(baseInput(snapshot), () => {});
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'cancelled' });
+    expect(invocations).toHaveLength(1);
+    const callResults = result.messages
+      .flatMap(message => message.blocks)
+      .filter((block): block is ToolResultBlock =>
+        block.type === 'tool-result' && block.callId === 'call-1');
+    expect(callResults).toHaveLength(1);
+    expect(callResults[0]).toMatchObject({ status: 'success' });
+    expect(JSON.stringify(result.messages)).not.toContain('结果未知');
+  });
+
+  it('P1-1：未核实集合中的只读 Tool 强制人工确认并携带原因', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query'), textResponse('已完成')];
+    const events: AgentExecutionEvent[] = [];
+    const runtime = createRuntime(model);
+
+    // local.query 声明只读，但上一轮存在结果未核实的调用：必须先人工核实。
+    const input = unverifiedInput(snapshot);
+    const execution = runtime.start(input, event => events.push(event));
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    execution.respond({ interruptId: 'interrupt-1', value: true });
+    const result = await execution.result;
+
+    expect(result.outcome).toEqual({ type: 'completed', stopReason: 'end-turn' });
+    expect(invocations).toHaveLength(1);
+    const interrupt = events.find(event => event.type === 'interrupt');
+    if (interrupt?.type === 'interrupt' && interrupt.interrupt.type === 'tool-confirmation') {
+      expect(interrupt.interrupt.reason).toBe('unverified-previous-invocation');
+    } else {
+      expect.unreachable('必须发布 Tool 确认中断');
+    }
+    // 真实结果落地后未核实状态解除
+    expect(result.messages.flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', execution: 'completed' }),
+    );
+  });
+
+  it('P1-1：结果未知的调用保持未核实，等待确认的取消不产生未核实事实', async () => {
+    const model = new ScriptedModel();
+    const runtime = createRuntime(model);
+
+    // 场景一：等待确认时取消——调用从未执行，不产生未核实事实。
+    const confirmSnapshot = createToolSnapshot([toolNamed('local.restart', true)]);
+    model.scripts = [toolResponse('local.restart'), textResponse('不应调用')];
+    const events: AgentExecutionEvent[] = [];
+    const confirmExecution = runtime.start(
+      baseInput(confirmSnapshot.snapshot), event => events.push(event));
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    confirmExecution.cancel();
+    const confirmed = await confirmExecution.result;
+    expect(confirmed.messages.flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', execution: 'not-executed' }),
+    );
+
+    // 场景二：调用已发出后取消——结果未知，Tool 名保持未核实，输入集合也保留。
+    const slowModel = new ScriptedModel();
+    slowModel.scripts = [toolResponse('local.slow')];
+    const slowRuntime = createRuntime(slowModel);
+    const slowSnapshot: ToolRegistrySnapshot = {
+      revision: 7,
+      tools: [toolNamed('local.slow')],
+      invoke: () => new Promise<ToolCallResult>(() => undefined),
+    };
+    const slowEvents: AgentExecutionEvent[] = [];
+    const slowExecution = slowRuntime.start(
+      unverifiedInput(slowSnapshot), event => slowEvents.push(event));
+    await vi.waitFor(() =>
+      expect(slowEvents.some(event => event.type === 'tool-call')).toBe(true));
+    slowExecution.cancel();
+    const cancelled = await slowExecution.result;
+    expect(cancelled.messages.flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ name: 'local.slow', execution: 'unknown' }),
+    );
+  });
+
+  it('P1-1：用户拒绝强制核实的调用不解除未核实状态', async () => {
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query'), textResponse('已跳过')];
+    const events: AgentExecutionEvent[] = [];
+    const runtime = createRuntime(model);
+
+    const input = unverifiedInput(snapshot);
+    const execution = runtime.start(input, event => events.push(event));
+    await vi.waitFor(() =>
+      expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    execution.respond({ interruptId: 'interrupt-1', value: false });
+    const result = await execution.result;
+
+    expect(invocations).toHaveLength(0);
+    // 拒绝只是“这次不执行”，上一轮未知结果仍未被核实。
+    expect(result.messages.flatMap(message => message.blocks)).toContainEqual(
+      expect.objectContaining({ name: 'local.query', execution: 'not-executed' }),
+    );
+    // 下一轮使用上一轮完整消息，换新 callId 后仍然必须确认。
+    model.scripts.push(toolResponse('local.query').map(event =>
+      event.type === 'block-start' && event.block.type === 'tool-call'
+        ? { ...event, block: { ...event.block, callId: 'call-next' } } : event));
+    const nextEvents: AgentExecutionEvent[] = [];
+    const next = runtime.start({
+      ...input,
+      conversation: { messages: [...input.conversation.messages, ...result.messages],
+        modelContext: result.modelContext },
+    }, event => nextEvents.push(event));
+    await vi.waitFor(() => expect(nextEvents.some(event => event.type === 'interrupt')).toBe(true));
+    next.cancel();
+    await next.result;
+    expect(JSON.stringify(result.messages)).toContain('未执行');
+  });
+
   it('VA-03：下一轮输入携带终态记录后与历史 Tool Call 严格配对', async () => {
     const { snapshot } = createToolSnapshot([toolNamed('local.restart', true)]);
     const model = new ScriptedModel();
@@ -1051,4 +1289,61 @@ describe('DefaultAgentRuntime', () => {
     expect(resultIds).toEqual(['call-1']);
     expect(secondResult.outcome).toEqual({ type: 'completed', stopReason: 'end-turn' });
   });
+  it('取消的最终消息监听器抛错时 result 明确拒绝，重入取消不重复通知', async () => {
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query')];
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const runtime = createRuntime(model);
+    let execution: AgentExecution;
+    let notifications = 0;
+    execution = runtime.start(baseInput(snapshot), event => {
+      if (event.type !== 'messages') return;
+      notifications += 1;
+      execution.cancel();
+      if (event.messages.some(message => message.role === 'tool')) {
+        throw new Error('终态订阅者异常');
+      }
+    });
+    await expect(execution.result).rejects.toThrow('终态订阅者异常');
+    expect(notifications).toBe(2);
+    expect(invocations).toHaveLength(0);
+  });
+
+  it('未知调用已移出压缩后的模型输入时，仍从完整历史恢复核实约束', async () => {
+    const model = new ScriptedModel();
+    model.scripts = [toolResponse('local.query')];
+    const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
+    const manager = new DefaultContextManager({
+      configuration: async () => testContextManager().getConfiguration(),
+      compact: async () => { throw new Error('本测试不应再次压缩'); },
+    });
+    await manager.loadConfiguration();
+    const input = unverifiedInput(snapshot);
+    const restored: AgentRunInput = {
+      ...input,
+      conversation: {
+        ...input.conversation,
+        modelContext: {
+          checkpoint: { id: 'checkpoint', summary: '旧对话摘要', trigger: 'manual',
+            compactedAt: '2026-09-06T00:00:00Z', tokensBefore: 500, estimatedTokensAfter: 100,
+            compactionCount: 1 },
+          firstRetainedMessageId: 'user-1', modelState: null,
+          usage: { totalTokens: 100, source: 'estimated', measuredThroughMessageId: 'user-1',
+            toolDefinitionTokens: 0 },
+        },
+      },
+    };
+    const runtime = new DefaultAgentRuntime(model, { limits: testLimits(), contextManager: manager });
+    const events: AgentExecutionEvent[] = [];
+    const execution = runtime.start(restored, event => events.push(event));
+    await vi.waitFor(() => expect(events.some(event => event.type === 'interrupt')).toBe(true));
+    expect(model.calls[0].request.messages.map(message => message.id)).not.toContain('old-result');
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'interrupt', interrupt: expect.objectContaining({ reason: 'unverified-previous-invocation' }),
+    }));
+    expect(invocations).toHaveLength(0);
+    execution.cancel();
+    await execution.result;
+  });
+
 });

@@ -2,6 +2,7 @@ package io.patchbridge.agent.starter.web;
 
 import io.patchbridge.agent.core.conversation.ConversationConflictException;
 import io.patchbridge.agent.core.conversation.ConversationNotFoundException;
+import io.patchbridge.agent.core.compaction.ContextWindowExceededException;
 import io.patchbridge.agent.core.error.AgentErrorCode;
 import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.error.ToolAccessDeniedException;
@@ -31,6 +32,7 @@ import java.util.Map;
         ToolGatewayController.class,
         ModelStreamController.class,
         ConversationController.class,
+        ContextCompactionController.class,
         AdminApiController.class,
         McpAdminController.class
 })
@@ -104,6 +106,17 @@ public class PatchBridgeAgentExceptionHandler {
     @ExceptionHandler(ModelGatewayException.class)
     public ResponseEntity<Map<String, Object>> modelFailed(ModelGatewayException e) {
         return error(HttpStatus.BAD_GATEWAY, AgentErrorCode.MODEL_FAILED, e.getMessage(), null);
+    }
+
+    /**
+     * 摘要请求超过窗口预算使用稳定 413，必须先映射再落到通用 MODEL_FAILED 分支：
+     * 重试同样的请求必然再次失败，浏览器需要可区分的“调整输入”语义。
+     */
+    @ExceptionHandler(ContextWindowExceededException.class)
+    public ResponseEntity<Map<String, Object>> contextWindowExceeded(
+            ContextWindowExceededException e) {
+        return error(HttpStatus.PAYLOAD_TOO_LARGE, AgentErrorCode.CONTEXT_WINDOW_EXCEEDED,
+                e.getMessage(), null);
     }
 
     /** 所有领域与 DTO 参数校验失败统一映射为 400。 */

@@ -5,7 +5,7 @@
 - 核心目标：后端无 Agent Runtime 状态；对宿主前后端代码保持最小侵入
 
 > 2026-09-05 实现核对：本文的不变量仍是架构约束。审查确认的后端动态 Tool 版本一致性、
-> 首轮保存快照、取消后继续、Java Tool 异常分类和压缩后预算检查五项缺口已于同日修复
+> 首轮保存快照、取消后继续、Java Tool 异常分类和压缩后预算检查五项缺口已完成修复，2026-09-06 后续复审补齐组合边界
 > 并补齐回归（VA-01～VA-05，实现与验证记录见[路线图](../roadmap.md)）；真实外部协议与
 > 宿主环境仍需按后续里程碑验证。详见
 > [愿景与实现审查](reviews/vision-and-implementation.md)。
@@ -43,6 +43,11 @@ Agent 执行状态：
 - 任意应用节点都能处理下一次 Model、Tool 或 Conversation 请求；
 - 模型调用所需的工作消息和对应 `ModelState` 由 Browser 请求显式携带；
 - Conversation 和 MCP 配置是持久化业务数据，不是驻留在节点内存中的 Agent Session。
+
+取消后结果未知的核实约束由 Browser 从完整历史中的 `ToolResultBlock.execution` 重建。
+它随消息持久化，压缩、恢复或会话切换不清除事实；服务端不保存等待确认的 Execution。
+MCP 公开版本使用宿主注入的独立共享密钥计算 HMAC，多实例使用相同密钥，避免公开凭据摘要。
+配置和升级约束见[配置参考](../reference/configuration.md)与[Runtime 契约](../reference/runtime-contracts.md)。
 
 SSE 连接、`ModelCall` 取消句柄和一次 HTTP 请求的上下文属于短生命周期资源，请求结束后即
 释放，不改变后端无 Agent Runtime 状态的定义。

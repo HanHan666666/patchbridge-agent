@@ -29,7 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
         "spring.sql.init.mode=always",
         "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
         "patchbridge-agent.model.context-window-tokens=128000",
-        "patchbridge-agent.mcp.source=jdbc"
+        "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                "patchbridge-agent.mcp.source=jdbc"
 })
 class CustomMcpStoreBackoffIntegrationTest {
 

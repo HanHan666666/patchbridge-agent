@@ -30,6 +30,7 @@ import io.patchbridge.agent.core.model.ModelUsage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -61,7 +62,8 @@ import java.nio.file.Paths;
             "spring.datasource.driver-class-name=org.h2.Driver",
             "spring.sql.init.mode=always",
             "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
-            "patchbridge-agent.model.base-url=http://localhost:0/v1",
+            "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                    "patchbridge-agent.model.base-url=http://localhost:0/v1",
             "patchbridge-agent.model.model=fake-model",
             "patchbridge-agent.model.context-window-tokens=128000",
             "patchbridge-agent.mcp.enabled=true",
@@ -322,6 +324,46 @@ class PatchBridgeAgentStarterIntegrationTest {
                 + "\",\"blocks\":[{\"type\":\"text\",\"text\":\"" + text + "\"}]}";
     }
 
+    /**
+     * 审查复现：摘要请求超过窗口预算必须返回稳定 413 CONTEXT_WINDOW_EXCEEDED，
+     * 而不是落入通用 502 MODEL_FAILED；浏览器据此提示调整输入而不是重试。
+     */
+    @Test
+    void contextCompactionOverBudgetReturnsStable413() throws Exception {
+        login("ai:chat:use");
+        // 窗口 128000、输出预留 12800 → 输入预算 115200；
+        // 单条淘汰前缀消息携带 116000 字节即可在调用模型前同步超限。
+        String oversized = repeat('x', 116_000);
+
+        mockMvc.perform(
+                        post("/ai/model/compact")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"traceId\":\"trace-over-budget\","
+                                            + "\"conversationId\":\"conversation-1\","
+                                            + "\"request\":{\"trigger\":\"manual\","
+                                            + "\"messagesToSummarize\":["
+                                            + textMessageJson("user-old", "user", oversized)
+                                            + "],\"retainedMessages\":["
+                                            + textMessageJson("user-new", "user", "近期问题")
+                                            + "],\"previousSummary\":null,"
+                                            + "\"modelState\":null,"
+                                            + "\"responseMessageId\":\"summary-over-budget\","
+                                            + "\"splitTurn\":false}}"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.error.code").value("CONTEXT_WINDOW_EXCEEDED"))
+                .andExpect(jsonPath("$.error.message").value(containsString("窗口预算")));
+    }
+
+    /** Java 8 兼容的重复字符拼接辅助，用于构造确定性的超长文本。 */
+    private static String repeat(char value, int times) {
+        StringBuilder builder = new StringBuilder(times);
+        for (int index = 0; index < times; index++) {
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
     /** 通过 MockMvc 异步派发完整消费一条生产 SSE 响应。 */
     private String requestModelStream(String responseMessageId) throws Exception {
         MvcResult started =
@@ -524,6 +566,45 @@ class PatchBridgeAgentStarterIntegrationTest {
                 .andExpect(jsonPath("$.context.modelContext.modelState.data.opaque")
                         .value("state-1"))
                 .andExpect(jsonPath("$.messages").doesNotExist());
+    }
+
+    /** 会话 HTTP 往返必须保存执行事实和目录计量基线，缺字段不能被 Jackson 静默丢弃。 */
+    @Test
+    void conversationRoundTripsExecutionFactsAndToolBudget() throws Exception {
+        login("ai:chat:use");
+        ObjectMapper mapper = new ObjectMapper();
+        String response = mockMvc.perform(post("/ai/conversations")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String id = mapper.readTree(response).path("conversation").path("conversationId").asText();
+        ObjectNode body = mapper.createObjectNode();
+        body.put("revision", 0);
+        ObjectNode context = body.putObject("context");
+        ArrayNode messages = context.putArray("messages");
+        ObjectNode assistant = messages.addObject();
+        assistant.put("id", "assistant").put("role", "assistant");
+        assistant.putArray("blocks").addObject().put("type", "tool-call")
+                .put("callId", "call").put("name", "local.action").putObject("input");
+        ObjectNode tool = messages.addObject();
+        tool.put("id", "tool").put("role", "tool");
+        ObjectNode result = tool.putArray("blocks").addObject();
+        result.put("type", "tool-result").put("callId", "call").put("name", "local.action")
+                .put("status", "error").put("execution", "unknown");
+        result.putArray("content").addObject().put("type", "text").put("text", "中止记录");
+        ObjectNode modelContext = context.putObject("modelContext");
+        modelContext.putNull("checkpoint").putNull("firstRetainedMessageId").putNull("modelState");
+        modelContext.putObject("usage").put("totalTokens", 120).put("source", "provider")
+                .put("measuredThroughMessageId", "assistant").put("toolDefinitionTokens", 73);
+        mockMvc.perform(put("/ai/conversations/" + id).contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(body))).andExpect(status().isOk());
+        mockMvc.perform(get("/ai/conversations/" + id)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.context.messages[1].blocks[0].execution").value("unknown"))
+                .andExpect(jsonPath("$.context.modelContext.usage.toolDefinitionTokens").value(73));
+        body.put("revision", 1);
+        result.remove("execution");
+        mockMvc.perform(put("/ai/conversations/" + id).contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
     }
 
     /** Conversation 保存只接受完整 Context，错误形状和字段缺失都必须返回 400。 */

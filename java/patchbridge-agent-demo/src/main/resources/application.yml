@@ -37,6 +37,7 @@ patchbridge-agent:
     # Demo 显式使用 Global JDBC 管理模式，不与 YAML Server 配置合并。
     # 生产密钥应由宿主密钥管理系统注入；Demo 也不提供默认值。
     # 生成示例：openssl rand -base64 32
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     source: jdbc
     jdbc:
       encryption-key: ${PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY}

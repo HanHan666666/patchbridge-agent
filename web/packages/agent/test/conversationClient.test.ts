@@ -79,4 +79,30 @@ describe('HttpConversationClient 响应边界校验', () => {
     }));
     await expect(badState.get('conv-1')).rejects.toThrow('context.modelContext');
   });
+  it('会话 HTTP 恢复保留执行事实与目录基线，旧字段缺失或非法值明确失败', async () => {
+    const context = {
+      messages: [{ id: 'tool-1', role: 'tool', blocks: [{
+        type: 'tool-result', callId: 'call-1', name: 'local.query', status: 'error',
+        execution: 'unknown', content: [{ type: 'text', text: '中止' }],
+      }] }],
+      modelContext: { ...testModelContext(), usage: { totalTokens: 120, source: 'provider',
+        measuredThroughMessageId: 'tool-1', toolDefinitionTokens: 73 } },
+    };
+    const body = { conversation: validConversation(), context };
+    const client = new HttpConversationClient('/ai', transportWith(body));
+    await expect(client.get('conv-1')).resolves.toMatchObject({ context });
+    for (const execution of [undefined, 'invalid', null]) {
+      const invalid = JSON.parse(JSON.stringify(body));
+      invalid.context.messages[0].blocks[0].execution = execution;
+      await expect(new HttpConversationClient('/ai', transportWith(invalid)).get('conv-1'))
+        .rejects.toMatchObject({ code: 'INVALID_STATE' });
+    }
+    for (const estimate of [undefined, -1, 1.5, '73']) {
+      const invalid = JSON.parse(JSON.stringify(body));
+      invalid.context.modelContext.usage.toolDefinitionTokens = estimate;
+      await expect(new HttpConversationClient('/ai', transportWith(invalid)).get('conv-1'))
+        .rejects.toMatchObject({ code: 'INVALID_STATE' });
+    }
+  });
+
 });

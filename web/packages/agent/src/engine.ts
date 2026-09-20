@@ -26,6 +26,12 @@ export interface ToolConfirmationInterrupt {
   readonly tool: ToolDefinition;
   /** 模型生成且已完成 JSON 校验的业务参数。 */
   readonly arguments: JsonObject;
+  /**
+   * 触发确认的额外原因；仅因 Tool 定义要求确认时省略。
+   * `unverified-previous-invocation` 表示该 Tool 存在结果未核实的调用，
+   * 即使声明只读也必须人工核实后才允许再次执行。
+   */
+  readonly reason?: 'unverified-previous-invocation';
 }
 
 /** Agent Execution 可发布的中断联合类型。 */

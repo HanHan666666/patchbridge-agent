@@ -42,8 +42,12 @@ public final class ModelContextUsage {
     /** 计量覆盖到的最后一条完整聊天消息。 */
     private final String measuredThroughMessageId;
 
+    /** 基线所覆盖目录的同口径估算量；压缩估算只覆盖消息，必须为 0。 */
+    private final long toolDefinitionTokens;
+
     /** 创建不可变模型上下文计量。 */
-    public ModelContextUsage(long totalTokens, Source source, String measuredThroughMessageId) {
+    public ModelContextUsage(long totalTokens, Source source, String measuredThroughMessageId,
+                             long toolDefinitionTokens) {
         if (totalTokens < 0) {
             throw new IllegalArgumentException("modelContext.usage.totalTokens 不可为负数");
         }
@@ -54,11 +58,18 @@ public final class ModelContextUsage {
             throw new IllegalArgumentException(
                     "modelContext.usage.measuredThroughMessageId 不允许为空字符串");
         }
+        if (toolDefinitionTokens < 0 || (source == Source.ESTIMATED && toolDefinitionTokens != 0)) {
+            throw new IllegalArgumentException(
+                    "usage.toolDefinitionTokens 必须非负，且 estimated 基线必须为 0");
+        }
+        this.toolDefinitionTokens = toolDefinitionTokens;
         this.totalTokens = totalTokens;
         this.source = source;
         this.measuredThroughMessageId = measuredThroughMessageId;
     }
 
+    /** 返回真实基线覆盖的目录估算量，供浏览器补计下一次目录增长量。 */
+    public long getToolDefinitionTokens() { return toolDefinitionTokens; }
     /** 返回工作上下文 token 总数。 */
     public long getTotalTokens() { return totalTokens; }
     /** 返回计量来源。 */

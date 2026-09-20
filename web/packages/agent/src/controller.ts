@@ -525,6 +525,9 @@ export class DefaultAgentController implements PatchBridgeAgentController {
             interruptId: event.interrupt.id,
             tool: event.interrupt.tool,
             arguments: event.interrupt.arguments,
+            ...(event.interrupt.reason == null
+              ? {}
+              : { reason: event.interrupt.reason }),
           },
         });
         break;
@@ -555,7 +558,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   private abortRun(): void {
     if (this.runActive) {
       const execution = this.currentExecution;
-      this.currentExecution?.cancel();
+      execution?.cancel();
       if (execution != null && this.currentExecution === execution) {
         this.currentExecution = null;
       }
@@ -702,8 +705,13 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   /** 将唯一领域事件交给纯函数状态机，并向订阅者发布隔离快照。 */
   private dispatch(event: AgentStateEvent): void {
     this.state = reduceAgentState(this.state, event);
+    const publishedState = this.state;
     const snapshot = this.getState();
     for (const listener of [...this.listeners]) {
+      // 订阅者同步取消会发布更新的终态；外层广播不能随后把旧快照再交给其余订阅者。
+      if (this.state !== publishedState) {
+        break;
+      }
       listener(snapshot);
     }
   }

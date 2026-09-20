@@ -480,6 +480,8 @@ Demo 模拟一个"企业设备管理系统"：Spring Security 表单登录、四
 cd java
 # JDBC MCP 凭据密钥必须显式注入（生成：openssl rand -base64 32）
 export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
+# 工具版本使用独立密钥；同一部署的所有实例共享
+export PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY='<另行生成的 32 字节密钥的 Base64>'
 # 模型地址与名称必须显式配置
 export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
 export PATCHBRIDGE_AGENT_MODEL='your-model'

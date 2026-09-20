@@ -86,12 +86,13 @@ export interface ContextManager {
   ): Promise<ConversationContext>;
   /** 把模型工作上下文转换成真正发送给 Provider 的消息。 */
   buildModelMessages(conversation: ConversationContext): readonly AgentMessage[];
-  /** 用 Provider 的必需用量和下一份私有状态推进模型工作上下文。 */
+  /** 用必需 Provider 用量、该次请求的 Tool 目录和下一份私有状态推进模型工作上下文。 */
   recordModelResponse(
     conversation: ConversationContext,
     responseMessage: AgentMessage,
     usage: ModelUsage | null,
     modelState: ModelState | null,
+    tools: readonly ModelToolDefinition[],
   ): ConversationContext;
 }
 
@@ -170,10 +171,9 @@ export class DefaultContextManager implements ContextManager {
   /**
    * 最终输入预算检查：工作消息 + 本轮 Tool 定义 + 输出预留必须装进模型窗口。
    *
-   * <p>计量优先使用 Provider 真实 usage 基线（加基线后新消息的保守估算），
-   * 避免用 UTF-8 字节上界重复计量已经精确计量过的历史；首次调用尚无 usage 时
-   * 才对完整出站输入做估算。超限抛出 CONTEXT_WINDOW_EXCEEDED，由 Runtime 终止
-   * 本轮，完整历史保留。
+   * <p>Provider 基线已包含上次目录，记录该目录的同口径估算量，只补计本轮目录
+   * 增长的差额；目录缩小时不从真实用量扣减估算值。压缩的 estimated 基线只覆盖
+   * 消息，其目录基线为 0。首次请求估算完整输入；不会将缺失 usage 伪装成真实计量。
    */
   private assertWithinInputBudget(
     conversation: ConversationContext,
@@ -182,9 +182,12 @@ export class DefaultContextManager implements ContextManager {
   ): void {
     const configuration = this.getConfiguration();
     const budgetTokens = this.inputBudgetTokens();
-    const estimatedTokens = conversation.modelContext.usage == null
-      ? estimateModelMessages(modelMessages) + estimateToolDefinitions(tools)
-      : measureCurrentTokens(conversation) + estimateToolDefinitions(tools);
+    const usage = conversation.modelContext.usage;
+    const toolTokens = estimateToolDefinitions(tools);
+    const estimatedTokens = usage == null
+      ? estimateModelMessages(modelMessages) + toolTokens
+      : measureCurrentTokens(conversation)
+        + Math.max(0, toolTokens - usage.toolDefinitionTokens);
     if (estimatedTokens <= budgetTokens) {
       return;
     }
@@ -267,6 +270,7 @@ export class DefaultContextManager implements ContextManager {
       usage: Object.freeze({
         totalTokens: estimatedTokensAfter,
         source: 'estimated' as const,
+        toolDefinitionTokens: 0,
         measuredThroughMessageId: lastMessage?.id ?? null,
       }),
     });
@@ -304,6 +308,7 @@ export class DefaultContextManager implements ContextManager {
     responseMessage: AgentMessage,
     usage: ModelUsage | null,
     modelState: ModelState | null,
+    tools: readonly ModelToolDefinition[],
   ): ConversationContext {
     if (usage == null) {
       throw invalidStateError('模型 Provider 未返回必需的 token usage，无法管理上下文窗口');
@@ -319,6 +324,7 @@ export class DefaultContextManager implements ContextManager {
         usage: Object.freeze({
           totalTokens: usage.totalTokens,
           source: 'provider' as const,
+          toolDefinitionTokens: estimateToolDefinitions(tools),
           measuredThroughMessageId: responseMessage.id,
         }),
       }),

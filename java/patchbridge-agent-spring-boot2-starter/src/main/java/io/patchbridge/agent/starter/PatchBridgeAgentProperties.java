@@ -252,6 +252,9 @@ public class PatchBridgeAgentProperties {
         private boolean enabled = true;
         /** properties 为显式只读模式；jdbc 为 Global Admin 动态管理模式。 */
         private String source = "properties";
+        /** 公开 Tool 版本的独立 HMAC 密钥；32 字节标准 Base64，多实例共享，启用 MCP 时必填。 */
+        private String toolVersionKey;
+
         /** MCP 统一命名空间根（全名 = root.serverKey.toolName）。 */
         private String namespace = "mcp";
         /** properties 模式绑定的全局 Server 配置；与 JDBC 源互斥。 */
@@ -265,6 +268,12 @@ public class PatchBridgeAgentProperties {
 
         /** 显式启用或关闭 MCP；关闭时不装配默认客户端、Store、Registry 或 Admin。 */
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        /** 返回宿主外部注入的版本密钥，不参与 Admin 展示。 */
+        public String getToolVersionKey() { return toolVersionKey; }
+
+        /** 绑定版本密钥，不生成默认值或从 MCP 凭据推导。 */
+        public void setToolVersionKey(String toolVersionKey) { this.toolVersionKey = toolVersionKey; }
 
         /** 返回唯一配置源标识。 */
         public String getSource() { return source; }

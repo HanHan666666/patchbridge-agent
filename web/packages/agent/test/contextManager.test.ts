@@ -51,6 +51,7 @@ function conversation(
       usage: modelContext.usage ?? Object.freeze({
         totalTokens,
         source: 'provider' as const,
+        toolDefinitionTokens: 0,
         measuredThroughMessageId: messages[messages.length - 1]?.id ?? null,
       }),
     }),
@@ -169,6 +170,7 @@ describe('DefaultContextManager', () => {
         type: 'tool-result' as const,
         callId: 'call-1',
         name: 'local.lookup',
+        execution: 'completed' as const,
         status: 'success' as const,
         content: Object.freeze([Object.freeze({ type: 'text' as const, text: '在线' })]),
       })]),
@@ -295,7 +297,7 @@ describe('DefaultContextManager', () => {
       response,
     ], 100);
 
-    expect(() => manager.recordModelResponse(current, response, null, null))
+    expect(() => manager.recordModelResponse(current, response, null, null, []))
       .toThrow('模型 Provider 未返回必需的 token usage');
   });
 
@@ -332,26 +334,65 @@ describe('DefaultContextManager', () => {
     expect(original.messages).toBe(historyBefore);
   });
 
-  it('VA-05：未触发压缩时最终检查同样覆盖本轮 Tool 定义与输出预留', async () => {
+  it('VA-05：estimated 基线只覆盖消息投影，最终检查叠加本轮 Tool 定义', async () => {
     const requests: ContextCompactionRequest[] = [];
     const manager = await managerFor(gateway(requests));
-    const original = conversation([
+    // 压缩后的过渡快照是 estimated：估算只覆盖消息投影，不含工具目录，
+    // 最终预算检查必须把本轮 Tool 定义补进窗口预算。
+    const compacted = conversation([
       textMessage('user-1', 'user', '问题'),
       textMessage('assistant-1', 'assistant', '答案'),
-    ], 700);
+    ], 700, {
+      usage: Object.freeze({
+        totalTokens: 700,
+        source: 'estimated' as const,
+        toolDefinitionTokens: 0,
+        measuredThroughMessageId: 'assistant-1',
+      }),
+    });
 
     await expect(manager.prepareForModelCall({
-      conversation: original,
+      conversation: compacted,
       tools: [{
         name: 'local.huge',
         description: 'x'.repeat(3_000),
         inputSchema: { type: 'object' },
       }],
-      callContext: { traceId: 'trace-tools', conversationId: 'conversation-1' },
+      callContext: { traceId: 'trace-estimated', conversationId: 'conversation-1' },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
 
     // 用量 700 低于阈值 800：压缩从未发生，失败只来自最终预算检查
+    expect(requests).toHaveLength(0);
+  });
+
+  it('VA-05：保存并恢复 Provider 基线后，相同目录不重复计量，目录增长必须计入预算', async () => {
+    const requests: ContextCompactionRequest[] = [];
+    const manager = await managerFor(gateway(requests));
+    const tools = [{ name: 'local.lookup', description: 'x'.repeat(1_000),
+      inputSchema: { type: 'object' } }];
+    const response = textMessage('assistant-1', 'assistant', '答案');
+    const original = manager.recordModelResponse(
+      conversation([textMessage('user-1', 'user', '问题'), response], 650),
+      response, { inputTokens: 600, outputTokens: 50, totalTokens: 650 }, null, tools,
+    );
+    expect(original.modelContext.usage?.toolDefinitionTokens).toBeGreaterThan(1_000);
+    const restored: ConversationContext = JSON.parse(JSON.stringify(original));
+    const input = { conversation: restored, tools,
+      callContext: { traceId: 'trace-provider', conversationId: 'conversation-1' },
+      signal: new AbortController().signal };
+
+    // 相同目录已在真实基线 650 中，不能加上目录字节估算导致误拒。
+    await expect(manager.prepareForModelCall(input)).resolves.toMatchObject({
+      modelMessages: original.messages,
+    });
+    // 下一轮刷新得到明显增大的目录，Provider 的旧基线不再覆盖新增部分。
+    await expect(manager.prepareForModelCall({ ...input,
+      tools: [...tools, { name: 'local.extra', description: 'x'.repeat(2_000), inputSchema: {} }],
+    })).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
+    await expect(manager.prepareForModelCall({ ...input,
+      tools: [{ ...tools[0], description: 'x'.repeat(3_000) }],
+    })).rejects.toMatchObject({ code: 'CONTEXT_WINDOW_EXCEEDED' });
     expect(requests).toHaveLength(0);
   });
 

@@ -21,6 +21,7 @@ import io.patchbridge.agent.core.model.ModelState;
 import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.ModelUsage;
+import io.patchbridge.agent.core.model.ReasoningBlock;
 import io.patchbridge.agent.core.model.TextBlock;
 
 import org.junit.jupiter.api.Test;
@@ -205,7 +206,7 @@ class DefaultContextCompactionProviderTest {
         DefaultContextCompactionProvider provider =
                 new DefaultContextCompactionProvider(gateway, projector, settings);
         List<AgentMessage> summarized = Arrays.asList(
-                text("user-old", MessageRole.USER, "旧问题".repeat(600)),
+                text("user-old", MessageRole.USER, repeat("旧问题", 600)),
                 text("assistant-old", MessageRole.ASSISTANT, "旧答案"));
         ContextCompactionRequest request = new ContextCompactionRequest(
                 ContextCompactionTrigger.AUTOMATIC,
@@ -219,9 +220,9 @@ class DefaultContextCompactionProviderTest {
 
         // 预算检查发生在发起模型调用之前，因此失败同步抛出，
         // HTTP Adapter 的同步 catch 路径同样要能审计到该失败。
-        ModelGatewayException failure =
+        ContextWindowExceededException failure =
                 assertThrows(
-                        ModelGatewayException.class,
+                        ContextWindowExceededException.class,
                         () -> provider.compact(request, context()));
 
         assertTrue(failure.getMessage().contains("窗口预算"));
@@ -232,6 +233,86 @@ class DefaultContextCompactionProviderTest {
     /** 创建大窗口测试设置，保证既有用例不受预算检查影响。 */
     private static ContextCompactionSettings testSettings() {
         return new ContextCompactionSettings(1_000_000);
+    }
+
+    /** 含 ReasoningBlock 的合法历史必须能正常压缩，估算器不得拒绝框架已有的内容契约。 */
+    @Test
+    void reasoningBlocksDoNotBlockCompaction() {
+        RecordingGateway gateway = new RecordingGateway(
+                new ImmediateInvocation(
+                        response("精确摘要", ModelStopReason.END_TURN,
+                                new ModelUsage(80L, 20L, 100L))));
+        DefaultContextCompactionProvider provider =
+                new DefaultContextCompactionProvider(
+                        gateway, new RecordingProjector(), testSettings());
+        List<AgentMessage> summarized = Arrays.asList(
+                text("user-old", MessageRole.USER, "旧问题"),
+                new AgentMessage(
+                        "assistant-old",
+                        MessageRole.ASSISTANT,
+                        Arrays.<ContentBlock>asList(
+                                new ReasoningBlock("先分析问题再作答"),
+                                new TextBlock("旧答案"))));
+        List<AgentMessage> retained = Collections.<AgentMessage>singletonList(
+                text("assistant-recent", MessageRole.ASSISTANT, "近期答案"));
+        ContextCompactionRequest request = new ContextCompactionRequest(
+                ContextCompactionTrigger.MANUAL,
+                summarized,
+                retained,
+                null,
+                null,
+                "summary-with-reasoning",
+                false);
+
+        ContextCompactionResult result =
+                provider.compact(request, context()).result().toCompletableFuture().join();
+
+        assertEquals("精确摘要", result.getSummary());
+        AgentMessage projected = gateway.received.get().getMessages().get(1);
+        assertEquals("assistant-old", projected.getId());
+        assertEquals(2, projected.getBlocks().size());
+        assertTrue(
+                projected.getBlocks().get(0) instanceof ReasoningBlock,
+                "淘汰前缀中的 reasoning 块必须原样进入摘要请求");
+    }
+
+    /** reasoning 文本必须计入摘要预算，估算器不得把思考块当成零成本或未知块。 */
+    @Test
+    void reasoningTextCountsTowardSummaryBudget() {
+        RecordingGateway gateway = new RecordingGateway(
+                new ImmediateInvocation(
+                        response("不应到达", ModelStopReason.END_TURN,
+                                new ModelUsage(80L, 20L, 100L))));
+        // 小窗口：阈值 800、预留 100 → 摘要输入预算 900；
+        // 淘汰前缀中仅 reasoning 块就携带 5400 字节，必须触发预算检查。
+        ContextCompactionSettings settings =
+                new ContextCompactionSettings(1_000, 400, 100);
+        DefaultContextCompactionProvider provider =
+                new DefaultContextCompactionProvider(gateway, new RecordingProjector(), settings);
+        List<AgentMessage> summarized = Arrays.asList(
+                text("user-old", MessageRole.USER, "旧问题"),
+                new AgentMessage(
+                        "assistant-old",
+                        MessageRole.ASSISTANT,
+                        Collections.<ContentBlock>singletonList(
+                                new ReasoningBlock(repeat("旧思考", 600)))));
+        ContextCompactionRequest request = new ContextCompactionRequest(
+                ContextCompactionTrigger.MANUAL,
+                summarized,
+                Collections.<AgentMessage>singletonList(
+                        text("assistant-recent", MessageRole.ASSISTANT, "近期答案")),
+                null,
+                null,
+                "summary-reasoning-over-budget",
+                false);
+
+        ModelGatewayException failure =
+                assertThrows(
+                        ModelGatewayException.class,
+                        () -> provider.compact(request, context()));
+
+        assertTrue(failure.getMessage().contains("窗口预算"));
+        assertNull(gateway.received.get(), "超限的摘要请求不得触达模型");
     }
 
     /** 创建包含固定 system、淘汰前缀与 assistant 保留边界的请求。 */
@@ -259,6 +340,15 @@ class DefaultContextCompactionProviderTest {
     /** 创建可信链路上下文。 */
     private static AiRequestContext context() {
         return new AiRequestContext(null, "trace-1", null, null, "conversation-1");
+    }
+
+    /** Java 8 兼容的重复拼接辅助；测试数据只需要确定性的长文本。 */
+    private static String repeat(String value, int times) {
+        StringBuilder builder = new StringBuilder(value.length() * times);
+        for (int index = 0; index < times; index++) {
+            builder.append(value);
+        }
+        return builder.toString();
     }
 
     /** 创建单文本消息。 */

@@ -66,13 +66,12 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
         int estimatedInputTokens = ModelInputEstimator.estimateMessages(summaryMessages);
         int inputBudget = settings.getContextWindowTokens() - settings.getReservedOutputTokens();
         if (estimatedInputTokens > inputBudget) {
-            throw new ModelGatewayException(
+            throw new ContextWindowExceededException(
                     "上下文摘要请求超过模型窗口预算：估算输入 " + estimatedInputTokens
                             + " tokens，可用预算 " + inputBudget
                             + "（窗口 " + settings.getContextWindowTokens()
                             + " − 输出预留 " + settings.getReservedOutputTokens()
-                            + "）。完整历史已保留，请缩小本次压缩范围后重试",
-                    false);
+                            + "）。完整历史已保留，请缩小本次压缩范围后重试");
         }
         ModelState summaryState =
                 stateProjector.project(request.getModelState(), summaryStateMessages(request));

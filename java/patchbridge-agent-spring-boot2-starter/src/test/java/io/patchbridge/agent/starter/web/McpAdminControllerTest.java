@@ -34,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class McpAdminControllerTest {
 
+    /** 仅用于测试的固定版本密钥哨兵，生产部署必须注入随机共享密钥。 */
+    private static final String TOOL_VERSION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
     /** 被测 Admin Controller。 */
     private McpAdminController controller;
 
@@ -53,7 +56,7 @@ class McpAdminControllerTest {
                 "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
         JdbcMcpConfigurationStore store = new JdbcMcpConfigurationStore(
                 dataSource, objectMapper, new AesGcmMcpCredentialCipher(key));
-        McpToolRegistry registry = new McpToolRegistry(store, new EmptyRemoteClient(), "mcp");
+        McpToolRegistry registry = new McpToolRegistry(store, new EmptyRemoteClient(), "mcp", TOOL_VERSION_KEY);
         controller = new McpAdminController(registry,
                 new McpConfigurationManager(store, registry));
     }

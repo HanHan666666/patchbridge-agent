@@ -315,7 +315,8 @@ public class PatchBridgeAgentAutoConfiguration {
             PatchBridgeAgentProperties properties,
             RemoteMcpClient client,
             McpConfigurationStore configurationStore) {
-        return new McpToolRegistry(configurationStore, client, properties.getMcp().getNamespace());
+        return new McpToolRegistry(configurationStore, client, properties.getMcp().getNamespace(),
+                properties.getMcp().getToolVersionKey());
     }
 
     /** 统一收口 Admin 配置变更与 Registry 快照发布。 */

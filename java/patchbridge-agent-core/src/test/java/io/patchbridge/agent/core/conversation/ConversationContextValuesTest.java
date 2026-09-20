@@ -8,6 +8,8 @@ import io.patchbridge.agent.core.model.ContentBlock;
 import io.patchbridge.agent.core.model.MessageRole;
 import io.patchbridge.agent.core.model.ModelState;
 import io.patchbridge.agent.core.model.TextBlock;
+import io.patchbridge.agent.core.model.ToolResultBlock;
+import io.patchbridge.agent.core.model.ToolResultStatus;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +40,7 @@ class ConversationContextValuesTest {
                                 new ModelContextUsage(
                                         42L,
                                         ModelContextUsage.Source.PROVIDER,
-                                        "m-1")));
+                                        "m-1", 77)));
 
         Map<String, Object> value = ConversationContextValues.toValue(context);
         ConversationContext restored = ConversationContextValues.fromValue(value);
@@ -84,5 +86,38 @@ class ConversationContextValuesTest {
 
         assertThrows(
                 IllegalArgumentException.class, () -> ConversationContextValues.fromValue(context));
+    }    /** 执行事实逐种往返，缺字段必须拒绝，不能把中止记录恢复为真实结果。 */
+    @Test
+    void roundTripsToolExecutionFactsAndRejectsMissingExecution() {
+        for (ToolResultBlock.Execution execution : ToolResultBlock.Execution.values()) {
+            AgentMessage message = new AgentMessage("tool-1", MessageRole.TOOL,
+                    Collections.<ContentBlock>singletonList(new ToolResultBlock(
+                            "call-1", "local.action", ToolResultStatus.ERROR, execution,
+                            Collections.singletonList(new TextBlock("不依赖提示文本恢复状态")))));
+            java.util.List<Map<String, Object>> values = ConversationContextValues.toMessagesValue(
+                    Collections.singletonList(message));
+            ToolResultBlock restored = (ToolResultBlock) ConversationContextValues.fromMessagesValue(values)
+                    .get(0).getBlocks().get(0);
+            assertEquals(execution, restored.getExecution());
+            Map<?, ?> block = (Map<?, ?>) ((java.util.List<?>) values.get(0).get("blocks")).get(0);
+            block.remove("execution");
+            assertThrows(IllegalArgumentException.class,
+                    () -> ConversationContextValues.fromMessagesValue(values));
+        }
     }
+
+    /** 目录基线与 usage 来源一致，损坏或缺失不能静默当成零。 */
+    @Test
+    void validatesToolDefinitionBaseline() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ModelContextUsage(10, ModelContextUsage.Source.PROVIDER, null, -1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ModelContextUsage(10, ModelContextUsage.Source.ESTIMATED, null, 1));
+        Map<String, Object> value = ConversationContextValues.toModelContextValue(new ModelContext(
+                null, null, null, new ModelContextUsage(10, ModelContextUsage.Source.PROVIDER, null, 7)));
+        ((Map<?, ?>) value.get("usage")).remove("toolDefinitionTokens");
+        assertThrows(IllegalArgumentException.class,
+                () -> ConversationContextValues.fromModelContextValue(value));
+    }
+
 }

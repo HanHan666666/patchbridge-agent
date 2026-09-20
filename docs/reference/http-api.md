@@ -84,7 +84,9 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 - `checkpoint` 为 `null`，或精确包含 `id/summary/trigger/compactedAt/tokensBefore/estimatedTokensAfter/compactionCount`；
 - `firstRetainedMessageId` 与 `checkpoint` 必须同时为 `null` 或同时非空，并引用完整 `messages` 中压缩后第一条保留的非 system 消息；
 - `modelState` 是与当前模型工作上下文严格对应的 Provider 私有状态；
-- `usage` 为 `null`，或精确包含 `totalTokens/source/measuredThroughMessageId`，其中 source 只能是 `provider` 或 `estimated`。
+- `usage` 为 `null`，或精确包含 `totalTokens/source/measuredThroughMessageId/toolDefinitionTokens`，其中 source 只能是 `provider` 或 `estimated`。 `toolDefinitionTokens` 必须为非负安全整数；estimated 基线必须为 0，用于保存该基线已经覆盖的工具目录估算量。
+- 每个 `tool-result` 必须包含 `execution`：`completed/not-executed/unknown/result-omitted`，后三种必须同时使用 `status: error`。保存和加载原样保留执行事实，不推断提示文案；缺失字段按当前严格契约拒绝。
+
 
 ### Model config
 
@@ -158,8 +160,9 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 
 服务端固定使用当前模型，不接受 Browser 传模型名，不向摘要调用提供 Tool。摘要请求本身
 遵守与普通请求相同的窗口预算：摘要输入（含淘汰前缀、保留尾部与固定指令）加输出预留
-超过窗口时在调用模型前明确失败。摘要空白、意外 `tool-use`、`max-tokens`、缺少 usage、
-预算超限、Provider 状态投影失败或上游失败返回明确错误；不会返回部分检查点、重试、
+超过窗口时在调用模型前明确失败，返回 <code>413 CONTEXT_WINDOW_EXCEEDED</code>（重试
+同样的请求必然再次失败，必须调整输入）。摘要空白、意外 `tool-use`、`max-tokens`、缺少
+usage、Provider 状态投影失败或上游失败返回明确错误；不会返回部分检查点、重试、
 换模型或清空状态。Servlet 取消、断开与超时会取消同一次真实模型调用。
 成功和失败均以 `COMPACTION` 类型写入现有审计入口。
 

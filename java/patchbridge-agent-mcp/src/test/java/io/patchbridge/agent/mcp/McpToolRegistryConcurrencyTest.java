@@ -20,6 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** 验证 MCP 刷新按 Server 隔离，慢网络调用不会形成注册表全局锁。 */
 class McpToolRegistryConcurrencyTest {
 
+    /** 仅用于测试的固定版本密钥哨兵，生产部署必须注入随机共享密钥。 */
+    private static final String TOOL_VERSION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
 
     /** 关闭测试线程池，避免测试进程残留非守护线程。 */
@@ -33,7 +36,7 @@ class McpToolRegistryConcurrencyTest {
     void differentServersRefreshIndependently() throws Exception {
         BlockingClient client = new BlockingClient();
         McpToolRegistry registry = new McpToolRegistry(
-                servers(config("slow"), config("fast")), client, "mcp");
+                servers(config("slow"), config("fast")), client, "mcp", TOOL_VERSION_KEY);
 
         Future<?> slow = executor.submit(() -> registry.refresh("slow"));
         assertTrue(client.slowEntered.await(1, TimeUnit.SECONDS));

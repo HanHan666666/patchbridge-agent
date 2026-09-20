@@ -106,6 +106,29 @@ class JdbcConversationRepositoryTest {
                 ConversationContextValues.toValue(loaded.getContext()));
     }
 
+    /** 未知执行事实与目录基线必须经过真实 JDBC JSON 存储一起恢复。 */
+    @Test
+    void persistsUnknownExecutionAndToolBudgetBaseline() throws Exception {
+        Conversation created = repository.create("u1", "未知执行");
+        ConversationContext original = new ConversationContext(Arrays.asList(
+                new AgentMessage("assistant", MessageRole.ASSISTANT,
+                        Collections.<ContentBlock>singletonList(new ToolCallBlock(
+                                "call", "local.action", Collections.<String, Object>emptyMap()))),
+                new AgentMessage("tool", MessageRole.TOOL,
+                        Collections.<ContentBlock>singletonList(new ToolResultBlock(
+                                "call", "local.action", ToolResultStatus.ERROR,
+                                ToolResultBlock.Execution.UNKNOWN,
+                                Collections.singletonList(new TextBlock("中止记录")))))),
+                new ModelContext(null, null, null, new ModelContextUsage(
+                        120, ModelContextUsage.Source.PROVIDER, "assistant", 70)));
+        repository.save("u1", created.getConversationId(), 0, null, original);
+        ConversationContext restored = repository.findSnapshot("u1", created.getConversationId()).getContext();
+        assertEquals(ConversationContextValues.toValue(original), ConversationContextValues.toValue(restored));
+        assertEquals(70, restored.getModelContext().getUsage().getToolDefinitionTokens());
+        assertEquals(ToolResultBlock.Execution.UNKNOWN,
+                ((ToolResultBlock) restored.getMessages().get(1).getBlocks().get(0)).getExecution());
+    }
+
     /** 第二次保存全量替换消息，并且显式空 ModelContext 会清除旧工作状态。 */
     @Test
     void replacesMessagesAndClearsModelContext() throws Exception {
@@ -281,6 +304,7 @@ class JdbcConversationRepositoryTest {
                                         "call-1",
                                         "local.device_get",
                                         ToolResultStatus.SUCCESS,
+                                        ToolResultBlock.Execution.COMPLETED,
                                         Collections.singletonList(
                                                 new TextBlock("{\"online\":true}"))))));
         messages.add(textMessage("assistant-2", MessageRole.ASSISTANT, "设备在线"));
@@ -300,7 +324,7 @@ class JdbcConversationRepositoryTest {
                         new ModelContextUsage(
                                 120,
                                 ModelContextUsage.Source.PROVIDER,
-                                "assistant-2")));
+                                "assistant-2", 0)));
     }
 
     /** 构造单文本块稳定消息。 */

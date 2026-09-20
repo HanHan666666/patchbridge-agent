@@ -53,6 +53,7 @@ class PatchBridgeAgentStartupDiagnosticsTest {
             .withPropertyValues(
                     "spring.datasource.url=jdbc:h2:mem:diagnostics;DB_CLOSE_DELAY=-1",
                     "spring.datasource.driver-class-name=org.h2.Driver",
+                    "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
                     "patchbridge-agent.model.base-url=http://localhost:0/v1",
                     "patchbridge-agent.model.model=fake-model",
                     "patchbridge-agent.model.context-window-tokens=128000");

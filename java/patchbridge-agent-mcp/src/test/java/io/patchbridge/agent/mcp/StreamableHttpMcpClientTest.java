@@ -38,6 +38,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class StreamableHttpMcpClientTest {
 
+    /** 仅用于测试的固定版本密钥哨兵，生产部署必须注入随机共享密钥。 */
+    private static final String TOOL_VERSION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private HttpServer server;
@@ -264,7 +267,7 @@ class StreamableHttpMcpClientTest {
         config.getTools().setInclude(Arrays.asList("no_such_tool"));
 
         McpToolRegistry registry = new McpToolRegistry(
-                servers("inventory", config), new StreamableHttpMcpClient(), "mcp");
+                servers("inventory", config), new StreamableHttpMcpClient(), "mcp", TOOL_VERSION_KEY);
         // include 过滤导致注册表没有任何 Tool 可导入，listTools 的合法响应为空
         assertTrue(registry.list().isEmpty());
     }
@@ -277,7 +280,7 @@ class StreamableHttpMcpClientTest {
         config.getTools().getPermissions().put("query_stock", "ai:mcp:inventory:read");
 
         McpToolRegistry registry = new McpToolRegistry(
-                servers("inventory", config), new StreamableHttpMcpClient(), "mcp");
+                servers("inventory", config), new StreamableHttpMcpClient(), "mcp", TOOL_VERSION_KEY);
         registry.refreshAll();
 
         List<ToolDefinition> tools = registry.list();
@@ -307,7 +310,7 @@ class StreamableHttpMcpClientTest {
     @Test
     void unknownServerToolFails() {
         McpToolRegistry registry = new McpToolRegistry(
-                new LinkedHashMap<String, McpServerConfig>(), new StreamableHttpMcpClient(), "mcp");
+                new LinkedHashMap<String, McpServerConfig>(), new StreamableHttpMcpClient(), "mcp", TOOL_VERSION_KEY);
         assertThrows(ToolExecutionException.class, () ->
                 registry.call("nobody.tool", null, new HashMap<String, Object>(), context()));
     }

@@ -24,6 +24,7 @@
 | <code>audit.summary-max-length</code> | <code>4000</code> | 必须大于 0 |
 | <code>mcp.enabled</code> | <code>true</code> | false 时不装配默认 MCP Client/Store/Registry/Manager/MCP Admin；不禁止宿主显式自定义 Bean |
 | <code>mcp.source</code> | <code>properties</code> | 仅 properties 或 jdbc；互斥、不合并、不失败切换 |
+| <code>mcp.tool-version-key</code> | 无 | 默认 MCP Registry 启用时必填（properties/JDBC/自定义 Store 均需要）；标准 Base64 解码后恰好 32 字节，用于 HMAC-SHA-256；所有实例共享，与 JDBC 加密密钥分离 |
 | <code>mcp.namespace</code> | <code>mcp</code> | 1-128 字符；字母数字、下划线、连字符，可用点分段 |
 | <code>mcp.servers</code> | 空 Map | properties 模式 Server；不可显式为 null |
 | <code>mcp.jdbc.encryption-key</code> | 无 | 默认 JDBC Store 需要；标准 Base64 解码后恰好 32 字节 |
@@ -98,6 +99,7 @@ URL 字符校验不是 SSRF 防护。生产环境必须用出站代理、防火�
 ~~~yaml
 patchbridge-agent:
   mcp:
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     enabled: true
     source: properties
     namespace: mcp
@@ -127,6 +129,7 @@ patchbridge-agent:
   admin:
     enabled: true
   mcp:
+    tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     enabled: true
     source: jdbc
     jdbc:
@@ -134,3 +137,11 @@ patchbridge-agent:
 ~~~
 
 只使用外部密钥系统或环境变量注入密钥。Admin 查询只返回 authType 和 credentialConfigured，不回显 token、密码或静态 Header。
+
+`mcp.tool-version-key` 由宿主密钥系统注入，用 `openssl rand -base64 32` 单独生成，不得使用
+远端密码或 Token，也不与 `mcp.jdbc.encryption-key` 复用。密钥仅供服务端版本计算，不写入
+工具发现、管理响应或日志；同一部署的所有实例必须一致，重启后保持不变。轮换时统一更新
+实例，旧工具引用会收到 `TOOL_VERSION_MISMATCH`，浏览器需重新发现后由用户重新发起操作。
+框架不接受旧密钥或自动重试调用。`mcp.enabled=false` 时不要求版本密钥；宿主替换整个
+`McpToolRegistry` Bean 时自行承担版本语义。直接构造 Registry 的 Map/Store 构造器均要求
+第四个参数 `toolVersionKey`，没有隐式进程密钥。

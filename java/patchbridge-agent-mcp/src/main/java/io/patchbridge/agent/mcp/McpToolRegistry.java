@@ -46,6 +46,9 @@ public class McpToolRegistry implements ToolProvider {
     /** 远程协议访问端口。 */
     private final RemoteMcpClient client;
 
+    /** 使用宿主共享密钥计算公开版本引用，避免把凭据变成公开摘要校验器。 */
+    private final McpToolVersions toolVersions;
+
     /** MCP 工具统一命名空间根。 */
     private final String namespaceRoot;
 
@@ -61,9 +64,10 @@ public class McpToolRegistry implements ToolProvider {
     /** 当前路由快照对应的持久化版本。 */
     private volatile String loadedConfigurationVersion;
 
-    /** 根据宿主配置创建所有 Server 的独立运行状态。 */
+    /** 根据宿主配置和显式共享版本密钥创建所有 Server 的独立运行状态。 */
     public McpToolRegistry(Map<String, McpServerConfig> configs,
-                           RemoteMcpClient client, String namespaceRoot) {
+                           RemoteMcpClient client, String namespaceRoot, String toolVersionKey) {
+        this.toolVersions = new McpToolVersions(toolVersionKey);
         this.client = client;
         this.namespaceRoot = namespaceRoot;
         this.configurationStore = null;
@@ -71,12 +75,13 @@ public class McpToolRegistry implements ToolProvider {
     }
 
     /**
-     * 从唯一配置源创建 Registry。
+     * 从唯一配置源与宿主共享版本密钥创建 Registry。
      * 每次 Tool 列表、调用或 Admin 操作前先比较快速版本，
      * 让 JDBC Global 变更在水平扩展的其他实例上也能自动生效。
      */
     public McpToolRegistry(McpConfigurationStore configurationStore,
-                           RemoteMcpClient client, String namespaceRoot) {
+                           RemoteMcpClient client, String namespaceRoot, String toolVersionKey) {
+        this.toolVersions = new McpToolVersions(toolVersionKey);
         this.client = client;
         this.namespaceRoot = namespaceRoot;
         this.configurationStore = configurationStore;
@@ -359,7 +364,7 @@ public class McpToolRegistry implements ToolProvider {
                     remote.isRequireConfirmation());
             // 版本引用覆盖路由配置与导入内容：配置重建或远端定义变化都会产生新版本，
             // 浏览器据此在下次调用时被明确拒绝，不会把旧语义执行到新目标。
-            String version = McpToolVersions.versionOf(state.key, state.config,
+            String version = toolVersions.versionOf(state.key, state.config,
                     remote.getName(), remote.getTitle(), remote.getDescription(),
                     remote.getInputSchema(), annotations, permissions);
             imported.add(new ToolDefinition(

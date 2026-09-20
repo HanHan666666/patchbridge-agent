@@ -242,7 +242,7 @@ function requireUsage(
   const usage = requireRecord(value, 'context.modelContext.usage');
   requireExactKeys(
     usage,
-    ['totalTokens', 'source', 'measuredThroughMessageId'],
+    ['totalTokens', 'source', 'measuredThroughMessageId', 'toolDefinitionTokens'],
     'context.modelContext.usage',
   );
   if (usage.source !== 'provider' && usage.source !== 'estimated') {
@@ -253,8 +253,15 @@ function requireUsage(
       || usage.measuredThroughMessageId.trim().length === 0)) {
     throw invalidStateError('usage.measuredThroughMessageId 必须是非空字符串或 null');
   }
+  const toolDefinitionTokens = requireNonNegativeInteger(
+    usage.toolDefinitionTokens, 'usage.toolDefinitionTokens',
+  );
+  if (usage.source === 'estimated' && toolDefinitionTokens !== 0) {
+    throw invalidStateError('压缩估算的 usage.toolDefinitionTokens 必须为 0');
+  }
   return Object.freeze({
     totalTokens: requireNonNegativeInteger(usage.totalTokens, 'usage.totalTokens'),
+    toolDefinitionTokens,
     source: usage.source,
     measuredThroughMessageId: usage.measuredThroughMessageId as string | null,
   });

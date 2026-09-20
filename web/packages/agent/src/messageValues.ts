@@ -9,6 +9,7 @@ import {
   copyAndFreezeJsonObject,
   copyAndFreezeJsonValue,
 } from './jsonValues';
+import { invalidStateError } from './errors';
 import type {
   AgentMessage,
   ContentBlock,
@@ -76,6 +77,10 @@ function snapshotContentBlock(block: ContentBlock): ContentBlock {
         input: copyAndFreezeJsonObject(block.input),
       });
     case 'tool-result':
+      if (!['completed', 'not-executed', 'unknown', 'result-omitted'].includes(block.execution)
+        || (block.execution !== 'completed' && block.status !== 'error')) {
+        throw invalidStateError('tool-result.execution 必须明确记录执行事实，非真实结果必须标为 error');
+      }
       return Object.freeze({
         ...block,
         content: Object.freeze(block.content.map(item => Object.freeze({ ...item }))),

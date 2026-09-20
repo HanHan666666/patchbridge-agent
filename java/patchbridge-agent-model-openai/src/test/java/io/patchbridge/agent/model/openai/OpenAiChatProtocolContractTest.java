@@ -167,6 +167,7 @@ class OpenAiChatProtocolContractTest {
                                         "call-1",
                                         "local.echo",
                                         ToolResultStatus.ERROR,
+                                        ToolResultBlock.Execution.COMPLETED,
                                         Arrays.asList(new TextBlock("业务失败"), new TextBlock("：无权限")))));
         ModelRequest request = request("response-after-tool", Arrays.asList(userMessage(), assistant, tool), null);
 
