@@ -49,7 +49,7 @@ class PatchBridgeAgentPropertiesTest {
     /** 模型超时禁止负数；0 显式保留 OkHttp 的无超时语义。 */
     @Test
     void modelTimeoutsRejectNegativeButAllowZero() {
-        PatchBridgeAgentProperties.Model model = new PatchBridgeAgentProperties.Model();
+        PatchBridgeAgentProperties.Target model = new PatchBridgeAgentProperties.Target();
 
         assertThrows(IllegalArgumentException.class, () -> model.setConnectTimeoutMs(-1));
         assertThrows(IllegalArgumentException.class, () -> model.setReadTimeoutMs(-1));

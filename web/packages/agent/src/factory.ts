@@ -5,6 +5,7 @@
  * 自定义 Model（改写模型调用策略）的接入点也收敛在这里，避免使用方了解内部装配顺序。
  */
 import { HttpConversationClient } from './clients/conversationClient';
+import { HttpModelTargetClient, type ModelTargetClient } from './clients/modelTargetClient';
 import type { ConversationClient } from './clients/conversationClient';
 import { HttpModel } from './clients/modelClient';
 import type { Model } from './clients/modelClient';
@@ -58,6 +59,8 @@ export interface CreateAgentControllerOptions {
   toolRegistry?: ToolRegistry;
   /** 完整替换默认会话 Client。 */
   conversationClient?: ConversationClient;
+  /** 替换目录和切换 HTTP 端口，仍由服务端做授权与一致性检查。 */
+  modelTargetClient?: ModelTargetClient;
   /** localStorage 上次会话缓存键。 */
   storageKey?: string;
   /**
@@ -122,6 +125,7 @@ export function createAgentController(
   return new DefaultAgentController({
     engine,
     conversations,
+    modelTargets: options.modelTargetClient ?? new HttpModelTargetClient(endpoint, options.transport),
     tools,
     contextManager,
     storageKey: options.storageKey,

@@ -9,6 +9,12 @@ import io.patchbridge.agent.core.model.ImageBlock;
 import io.patchbridge.agent.core.model.ImageSource;
 import io.patchbridge.agent.core.model.MessageRole;
 import io.patchbridge.agent.core.model.ModelRequest;
+import io.patchbridge.agent.core.model.ModelProtocolAdapter;
+import io.patchbridge.agent.core.model.ModelCall;
+import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.target.*;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
 import io.patchbridge.agent.core.model.ModelResponse;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.TextBlock;
@@ -20,6 +26,7 @@ import org.springframework.web.context.request.async.DeferredResult;
 
 import java.time.Duration;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.UUID;
 
@@ -42,6 +49,8 @@ import static org.mockito.Mockito.when;
  * 启动时仍由 Starter 注入当前配置的真实 Provider。
  */
 class DemoModelInvocationTest {
+    /** 测试模型的稳定公开引用。 */
+    private static final ModelTargetRef REF = new ModelTargetRef("demo-test", 1);
 
     /** 文本 Demo 应使用结构化消息并把调用句柄原样交给 Controller。 */
     @Test
@@ -50,13 +59,14 @@ class DemoModelInvocationTest {
         ModelInvocation invocation = mock(ModelInvocation.class);
         AiRequestContext context = requestContext(user());
         when(gateway.invoke(any(ModelRequest.class), same(context))).thenReturn(invocation);
-        DemoModelInvocationService service = new DemoModelInvocationService(gateway);
+        DemoModelInvocationService service = new DemoModelInvocationService(gateway, router());
 
         assertSame(invocation, service.invokeText("检查这段企业公告", context));
 
         ArgumentCaptor<ModelRequest> requestCaptor = ArgumentCaptor.forClass(ModelRequest.class);
         verify(gateway).invoke(requestCaptor.capture(), same(context));
         ModelRequest request = requestCaptor.getValue();
+        assertEquals(REF, request.getModelTarget());
         assertEquals(Integer.valueOf(300), request.getMaxTokens());
         assertEquals(2, request.getMessages().size());
         AgentMessage userMessage = request.getMessages().get(1);
@@ -72,7 +82,7 @@ class DemoModelInvocationTest {
         ModelInvocation invocation = mock(ModelInvocation.class);
         AiRequestContext context = requestContext(user());
         when(gateway.invoke(any(ModelRequest.class), same(context))).thenReturn(invocation);
-        DemoModelInvocationService service = new DemoModelInvocationService(gateway);
+        DemoModelInvocationService service = new DemoModelInvocationService(gateway, router());
         ImageSource source = ImageSource.base64("image/png", "QUJD");
 
         assertSame(invocation, service.invokeImage("检查图片", source, context));
@@ -83,6 +93,26 @@ class DemoModelInvocationTest {
         assertEquals(2, userMessage.getBlocks().size());
         assertEquals("检查图片", ((TextBlock) userMessage.getBlocks().get(0)).getText());
         assertSame(source, ((ImageBlock) userMessage.getBlocks().get(1)).getSource());
+    }
+
+    /** Java Demo 只能通过 Router 取得显式配置的默认目标。 */
+    private static ModelProviderRouter router() {
+        ModelProtocolAdapter adapter = new ModelProtocolAdapter() {
+            /** 构造请求测试不执行上游编码。 */
+            @Override public void validate(ModelRequest request) { }
+            /** 本测试不发起模型网络调用。 */
+            @Override public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
+                throw new UnsupportedOperationException("测试不执行模型调用");
+            }
+            /** 本测试不处理私有状态。 */
+            @Override public ModelState project(ModelState state, List<AgentMessage> messages) {
+                throw new UnsupportedOperationException("测试不执行状态投影");
+            }
+        };
+        ResolvedModelTarget target = new ResolvedModelTarget(REF, "Demo 测试", "test", true,
+                true, true, new ContextCompactionSettings(128000, 20000, 12800), adapter);
+        return new ModelProviderRouter(new ImmutableModelTargetCatalog(
+                Collections.singletonList(target), REF), (access, selected) -> true);
     }
 
     /** 文本 Controller 应显式使用约定超时，而不是无限阻塞。 */

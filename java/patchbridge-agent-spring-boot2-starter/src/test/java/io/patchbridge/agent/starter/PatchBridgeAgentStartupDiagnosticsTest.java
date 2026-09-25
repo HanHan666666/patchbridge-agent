@@ -3,11 +3,6 @@ package io.patchbridge.agent.starter;
 import io.patchbridge.agent.core.auth.CurrentUserProvider;
 import io.patchbridge.agent.core.auth.ToolAccessPolicy;
 import io.patchbridge.agent.core.context.AiRequestContext;
-import io.patchbridge.agent.core.model.ModelCall;
-import io.patchbridge.agent.core.model.ModelProvider;
-import io.patchbridge.agent.core.model.ModelStateProjector;
-import io.patchbridge.agent.core.model.ModelRequest;
-import io.patchbridge.agent.core.model.ModelStreamListener;
 import io.patchbridge.agent.core.tool.ToolDefinition;
 import io.patchbridge.agent.core.user.UserContext;
 import io.patchbridge.agent.mcp.McpConfigurationStore;
@@ -41,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ExtendWith(OutputCaptureExtension.class)
 class PatchBridgeAgentStartupDiagnosticsTest {
 
-    /** 可启动完整 Starter 装配的最小上下文；默认实现齐全时应输出全部三条 WARN。 */
+    /** 可启动完整 Starter 装配的最小上下文；默认实现齐全时应输出两条 WARN。 */
     private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     ConfigurationPropertiesAutoConfiguration.class,
@@ -54,41 +49,24 @@ class PatchBridgeAgentStartupDiagnosticsTest {
                     "spring.datasource.url=jdbc:h2:mem:diagnostics;DB_CLOSE_DELAY=-1",
                     "spring.datasource.driver-class-name=org.h2.Driver",
                     "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-                    "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                    "patchbridge-agent.model.model=fake-model",
-                    "patchbridge-agent.model.context-window-tokens=128000");
+                    "patchbridge-agent.models.default-target=test",
+                    "patchbridge-agent.models.targets.test.display-name=测试模型",
+                    "patchbridge-agent.models.targets.test.protocol=openai-chat-completions",
+                    "patchbridge-agent.models.targets.test.routing-revision=1",
+                    "patchbridge-agent.models.targets.test.base-url=http://localhost:0/v1",
+                    "patchbridge-agent.models.targets.test.model=fake-model",
+                    "patchbridge-agent.models.targets.test.image-input=true",
+                    "patchbridge-agent.models.targets.test.tool-calling=true",
+                    "patchbridge-agent.models.targets.test.context-window-tokens=128000");
 
-    /** 默认实现全部装配且缺少部署条件配置时，三条编号 WARN 都必须出现。 */
+    /** 默认实现全部装配且缺少部署条件配置时，两条编号 WARN 都必须出现。 */
     @Test
     void defaultBeansEmitAllThreeWarnings(CapturedOutput output) {
         runner.run(context -> {
             assertTrue(context.isRunning());
-            assertTrue(output.toString().contains("PBA-CFG-001"), "缺少模型凭据警告");
             assertTrue(output.toString().contains("PBA-CFG-002"), "缺少 MCP Server 警告");
             assertTrue(output.toString().contains("PBA-CFG-003"), "默认权限策略警告");
         });
-    }
-
-    /** 配置 API Key 后不再告警，且配置值本身绝不进入日志。 */
-    @Test
-    void configuredApiKeySuppressesWarningAndNeverLeaksValue(CapturedOutput output) {
-        runner.withPropertyValues(
-                        "patchbridge-agent.model.api-key=sk-diagnostic-sentinel-9f2b") // gitleaks:allow 固定测试哨兵，仅用于断言配置值不进入日志，非真实凭据
-                .run(context -> {
-                    assertFalse(output.toString().contains("PBA-CFG-001"));
-                    assertFalse(output.toString().contains("sk-diagnostic-sentinel-9f2b"));
-                });
-    }
-
-    /** 宿主提供自定义 ModelProvider 时默认实现让位，不再产生模型凭据误报。 */
-    @Test
-    void customModelProviderSuppressesModelWarning(CapturedOutput output) {
-        runner.withBean("hostModelProvider", ModelProvider.class, StubModelProvider::new)
-                .withBean(
-                        "hostModelStateProjector",
-                        ModelStateProjector.class,
-                        () -> (state, retainedMessages) -> state)
-                .run(context -> assertFalse(output.toString().contains("PBA-CFG-001")));
     }
 
     /** 显式关闭 MCP 不会再有“空 Server 列表”告警。 */
@@ -119,10 +97,6 @@ class PatchBridgeAgentStartupDiagnosticsTest {
         context.refresh();
         // 按自动装配的稳定名称注册默认实现，模拟完整默认 Bean 图
         context.getBeanFactory().registerSingleton(
-                "openAiCompatibleModelProvider",
-                new io.patchbridge.agent.starter.model.OpenAiCompatibleModelProvider(
-                        modelConfig("http://localhost:0/v1", "fake-model")));
-        context.getBeanFactory().registerSingleton(
                 "propertiesMcpConfigurationStore",
                 new io.patchbridge.agent.mcp.PropertiesMcpConfigurationStore(
                         Collections.<String, McpServerConfig>emptyMap()));
@@ -139,7 +113,6 @@ class PatchBridgeAgentStartupDiagnosticsTest {
         foreign.refresh();
         diagnostics.onApplicationEvent(new ContextRefreshedEvent(foreign));
 
-        assertEquals(1, countOccurrences("PBA-CFG-001", output.toString()));
         assertEquals(1, countOccurrences("PBA-CFG-002", output.toString()));
         assertEquals(1, countOccurrences("PBA-CFG-003", output.toString()));
 
@@ -158,14 +131,6 @@ class PatchBridgeAgentStartupDiagnosticsTest {
         return count;
     }
 
-    /** 构造已通过构造期校验的模型配置。 */
-    private static PatchBridgeAgentProperties.Model modelConfig(String baseUrl, String model) {
-        PatchBridgeAgentProperties.Model config = new PatchBridgeAgentProperties.Model();
-        config.setBaseUrl(baseUrl);
-        config.setModel(model);
-        return config;
-    }
-
     /** 最小宿主配置：提供 Starter 硬依赖的当前用户适配器。 */
     @Configuration
     static class MinimalHostConfig {
@@ -179,16 +144,6 @@ class PatchBridgeAgentStartupDiagnosticsTest {
                     return UserContext.builder().userId("diagnostic-user").build();
                 }
             };
-        }
-    }
-
-    /** 不发起真实网络调用的宿主自定义模型实现。 */
-    static class StubModelProvider implements ModelProvider {
-
-        /** 诊断测试不会触发模型调用，实现只需满足装配。 */
-        @Override
-        public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
-            throw new UnsupportedOperationException("诊断测试不执行模型调用");
         }
     }
 

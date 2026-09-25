@@ -7,19 +7,17 @@ Demo 是一个模拟企业设备系统，用真实模型和真实 MCP endpoint�
 ### 启动
 
 ~~~bash
-export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://model-gateway.example/v1'
-export PATCHBRIDGE_AGENT_MODEL='model-name-placeholder'
-export PATCHBRIDGE_AGENT_MODEL_API_KEY='<model-api-key-placeholder>'
-export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
-export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<base64-encoded-32-byte-key-placeholder>'
+export PATCHBRIDGE_AGENT_MODEL_API_KEY='<你的 DeepSeek API Key>'
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='1048576'
+export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<独立生成的 32 字节 Base64 密钥>'
+export PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY='<另一份独立生成的 32 字节 Base64 密钥>'
 
 cd java
 mvn install -DskipTests
 mvn -pl patchbridge-agent-demo spring-boot:run
 ~~~
 
-不要使用占位符本身启动。模型 API key 是否必需取决于目标网关；模型 base URL、真实上下文
-窗口和 JDBC MCP 加密密钥在 Demo 当前装配下是硬前置。
+不要使用占位符本身启动。Demo 的两个部署目标分别调用 DeepSeek Flash 的 OpenAI Chat 与 Anthropic Messages 接口，API Key、真实上下文窗口和两份独立 MCP 密钥是启动前置。当前 DeepSeek 文档给出 Flash 1M 上下文；模型更新时请重新核对[官方模型表](https://api-docs.deepseek.com/quick_start/pricing/)。
 
 Demo 默认使用 `jdbc:h2:file:./data/demo-db`。已经成功保存的完整 Conversation 在进程重启后
 继续存在；浏览器中仍在运行、失败或尚未保存的 Execution 不是服务端会话数据，刷新页面或
@@ -41,7 +39,7 @@ Demo 源码定义 admin、operator、user、auditor 四个内存用户及不同�
 ### 功能验收路径
 
 1. 以不同 Demo 用户登录，比较 Tool discovery 和 restart 权限。
-2. 在聊天中触发只读查询，观察结构化流和会话保存。
+2. 在聊天中触发只读查询，观察结构化流和会话保存；空闲时使用 Widget 的模型选择器在两个 DeepSeek Flash 协议目标间显式切换，再发送下一轮消息。
 3. 触发破坏性 Tool，验证 HITL 批准/拒绝；再确认服务端仍执行 canInvoke。
 4. 刷新页面，确认只恢复最后完整 Conversation，而不恢复未完成的 Execution。
 5. 在 Tools 调试页签比较空闲 Registry 和运行中冻结快照。
@@ -61,7 +59,7 @@ Demo 对 <code>/ai/**</code> 和 logout 关闭 CSRF，是同源 SameSite Cookie 
 
 ## Demo 验收清单
 
-- 首页“聊天”可以让真实模型调用后端 `@AiTool`。
+- 首页“聊天”可以让真实模型调用后端 `@AiTool`；当前模型选择器显示服务端脱敏目录，空闲时可切换，切换后刷新仍使用保存的目标。
 - 首页 `frontend.device_search` 可以调用 `/demo-api/devices`，Network 中没有 `/ai/tools/call`。
 - 支持 WebMCP 的浏览器中，`page.open_tools_tab` 出现在 Tools 列表且调用前要求确认；不支持时显示真实状态。
 - `/ai-admin/` 可以创建真实 Global MCP Server，并测试、刷新、启停、修改、删除。

@@ -4,6 +4,7 @@ import io.patchbridge.agent.core.conversation.ContextCompactionTrigger;
 import io.patchbridge.agent.core.model.AgentMessage;
 import io.patchbridge.agent.core.model.ModelState;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -16,6 +17,8 @@ import java.util.List;
  */
 public final class ContextCompactionRequest {
 
+    /** 与摘要和状态投影共同绑定的目标。 */
+    private final ModelTargetRef modelTarget;
     /** 自动或手动触发来源。 */
     private final ContextCompactionTrigger trigger;
     /** 固定 system 消息与淘汰历史前缀。 */
@@ -32,6 +35,7 @@ public final class ContextCompactionRequest {
     private final boolean splitTurn;
     /** 创建不可变压缩请求。 */
     public ContextCompactionRequest(
+            ModelTargetRef modelTarget,
             ContextCompactionTrigger trigger,
             List<AgentMessage> messagesToSummarize,
             List<AgentMessage> retainedMessages,
@@ -42,6 +46,8 @@ public final class ContextCompactionRequest {
         if (trigger == null) {
             throw new IllegalArgumentException("contextCompaction.trigger 不可为空");
         }
+        if (modelTarget == null) throw new IllegalArgumentException("modelTarget 不可为空");
+        this.modelTarget = modelTarget;
         this.trigger = trigger;
         this.messagesToSummarize = snapshot(messagesToSummarize, "messagesToSummarize");
         this.retainedMessages = snapshot(retainedMessages, "retainedMessages");
@@ -63,6 +69,8 @@ public final class ContextCompactionRequest {
         this.splitTurn = splitTurn;
     }
 
+    /** 返回本次摘要使用的精确模型目标。 */
+    public ModelTargetRef getModelTarget() { return modelTarget; }
     /** 返回触发来源。 */
     public ContextCompactionTrigger getTrigger() { return trigger; }
     /** 返回被摘要的真实消息快照。 */

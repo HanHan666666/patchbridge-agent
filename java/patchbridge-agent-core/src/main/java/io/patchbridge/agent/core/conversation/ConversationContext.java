@@ -1,6 +1,7 @@
 package io.patchbridge.agent.core.conversation;
 
 import io.patchbridge.agent.core.model.AgentMessage;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import io.patchbridge.agent.core.model.MessageRole;
 
 import java.util.ArrayList;
@@ -16,6 +17,9 @@ import java.util.Set;
  */
 public final class ConversationContext {
 
+    /** 与完整上下文同一修订保存的当前目标。 */
+    private final ModelTargetRef modelTarget;
+
     /** 按对话顺序排列的稳定消息快照。 */
     private final List<AgentMessage> messages;
 
@@ -28,18 +32,23 @@ public final class ConversationContext {
      * @param messages 完整稳定消息列表，允许为空但不能为 null
      * @param modelContext 非空的模型工作上下文
      */
-    public ConversationContext(List<AgentMessage> messages, ModelContext modelContext) {
+    public ConversationContext(List<AgentMessage> messages, ModelTargetRef modelTarget, ModelContext modelContext) {
         if (messages == null) {
             throw new IllegalArgumentException("conversationContext.messages 不可为空");
         }
         if (modelContext == null) {
             throw new IllegalArgumentException("conversationContext.modelContext 不可为空");
         }
+        if (modelTarget == null) throw new IllegalArgumentException("modelTarget 不可为空");
+        this.modelTarget = modelTarget;
         assertUniqueMessageIds(messages);
         assertModelContextReferences(messages, modelContext);
         this.messages = Collections.unmodifiableList(new ArrayList<AgentMessage>(messages));
         this.modelContext = modelContext;
     }
+
+    /** 返回会话下一次调用必须使用的目标。 */
+    public ModelTargetRef getModelTarget() { return modelTarget; }
 
     /** 返回按对话顺序排列的不可变消息快照。 */
     public List<AgentMessage> getMessages() {

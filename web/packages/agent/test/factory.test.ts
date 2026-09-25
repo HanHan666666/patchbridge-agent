@@ -18,7 +18,7 @@ import type { ToolClient } from '../src/clients/toolClient';
 import type { AgentHookFailure } from '../src/extensions';
 import type { AgentError } from '../src/types';
 import type { ContextCompactionGateway } from '../src/clients/contextCompactionClient';
-import { TEST_MODEL_USAGE, testModelContext } from './testContext';
+import { TEST_MODEL_USAGE, TEST_TARGET, testModelContext, testModelTargetClient } from './testContext';
 
 /** 工厂测试使用的固定模型窗口；这些用例不触发压缩模型调用。 */
 const CONTEXT_GATEWAY: ContextCompactionGateway = {
@@ -85,13 +85,14 @@ class SingleConversationClient implements ConversationClient {
   }
 
   async create(title: string | null): Promise<Conversation> {
+    this.savedId = 'conversation-factory';
     return conversation('conversation-factory', 0, title);
   }
 
   async get(id: string): Promise<ConversationDetail> {
     return {
       conversation: conversation(id, 0),
-      context: { messages: [], modelContext: testModelContext() },
+      context: { messages: [], modelTarget: TEST_TARGET, modelContext: testModelContext() },
     };
   }
 
@@ -148,6 +149,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
     const storage = stubStorage();
     const conversations = new SingleConversationClient();
     const controller = createAgentController({
+      modelTargetClient: testModelTargetClient(),
       endpoint: '/ai',
       model: new SingleTurnModel(),
       conversationClient: conversations,
@@ -173,6 +175,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
     const storage = stubStorage();
     const conversations = new SingleConversationClient();
     const controller = createAgentController({
+      modelTargetClient: testModelTargetClient(),
       endpoint: '/ai',
       model: new SingleTurnModel(),
       conversationClient: conversations,
@@ -204,6 +207,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
     const storage = stubStorage();
     const conversations = new SingleConversationClient();
     const controller = createAgentController({
+      modelTargetClient: testModelTargetClient(),
       endpoint: '/ai',
       model: new SingleTurnModel(),
       conversationClient: conversations,
@@ -233,6 +237,7 @@ describe('createAgentController 调用轨迹采集开关', () => {
     }) satisfies AgentError;
     const diagnostics: AgentHookFailure[] = [];
     const controller = createAgentController({
+      modelTargetClient: testModelTargetClient(),
       endpoint: '/ai',
       model: new SingleTurnModel(),
       conversationClient: new SingleConversationClient(),

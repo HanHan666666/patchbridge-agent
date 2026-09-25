@@ -6,7 +6,7 @@
  * 多 Tab 冲突以 409 显式暴露而非静默覆盖。
  */
 import { invalidStateError } from '../errors';
-import type { Conversation, ConversationContext } from '../types';
+import type { Conversation, ConversationContext, ModelTargetRef } from '../types';
 import { snapshotConversationContext } from '../messageValues';
 import {
   defaultHttpTransport,
@@ -35,7 +35,7 @@ export interface ConversationSaveBody {
 /** Conversation Client 契约：Controller 依赖此接口，测试可注入假实现。 */
 export interface ConversationClient {
   list(signal?: AbortSignal): Promise<Conversation[]>;
-  create(title: string | null, signal?: AbortSignal): Promise<Conversation>;
+  create(title: string | null, context: ConversationContext, signal?: AbortSignal): Promise<Conversation>;
   get(id: string, signal?: AbortSignal): Promise<ConversationDetail>;
   save(id: string, body: ConversationSaveBody, signal?: AbortSignal): Promise<Conversation>;
   delete(id: string, signal?: AbortSignal): Promise<void>;
@@ -62,10 +62,10 @@ export class HttpConversationClient implements ConversationClient {
       .map(item => requireConversation(item, 'conversations[]'));
   }
 
-  async create(title: string | null, signal?: AbortSignal): Promise<Conversation> {
+  async create(title: string | null, context: ConversationContext, signal?: AbortSignal): Promise<Conversation> {
     const body = await requestJson<{ conversation: unknown }>(
       `${this.endpoint}/conversations`,
-      jsonInit('POST', { title }, signal),
+      jsonInit('POST', { title, context }, signal),
       this.transport,
     );
     return requireConversation(body.conversation, 'conversation');
@@ -108,7 +108,7 @@ export class HttpConversationClient implements ConversationClient {
  * <p>字段级失败显式抛出 invalidStateError，不静默容忍错误形状——否则畸形数据
  * 会流入 Controller 状态与 View 渲染，把协议问题变成更难定位的界面错误。
  */
-function requireConversation(value: unknown, field: string): Conversation {
+export function requireConversation(value: unknown, field: string): Conversation {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw invalidStateError(`服务端响应字段 ${field} 必须是会话对象`);
   }
@@ -138,22 +138,41 @@ function requireConversationDetail(value: unknown): ConversationDetail {
   }
   const detail = value as Record<string, unknown>;
   const conversation = requireConversation(detail.conversation, 'conversation');
-  const context = detail.context;
+  const context = requireConversationContext(detail.context);
+  return Object.freeze({ conversation, context });
+}
+
+/** 严格恢复持久化上下文；模型切换响应也使用这一入口。 */
+export function requireConversationContext(value: unknown): ConversationContext {
+  const context = value;
   if (typeof context !== 'object' || context === null || Array.isArray(context)) {
     throw invalidStateError('服务端响应字段 context 必须是对象');
   }
   const contextRecord = context as Record<string, unknown>;
+  requireExactKeys(contextRecord, ['messages', 'modelTarget', 'modelContext'], 'context');
   if (!Array.isArray(contextRecord.messages)) {
     throw invalidStateError('服务端响应字段 context.messages 必须是数组');
   }
   const modelContext = requireModelContext(contextRecord.modelContext);
   return Object.freeze({
-    conversation,
-    context: snapshotConversationContext({
+    ...snapshotConversationContext({
       messages: contextRecord.messages as ConversationContext['messages'],
+      modelTarget: requireModelTargetRef(contextRecord.modelTarget),
       modelContext,
     }),
   });
+}
+
+/** 跨会话、模型调用和切换命令共用的目标引用校验。 */
+export function requireModelTargetRef(value: unknown): ModelTargetRef {
+  const record = requireRecord(value, 'modelTarget');
+  requireExactKeys(record, ['targetId', 'routingRevision'], 'modelTarget');
+  if (typeof record.targetId !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(record.targetId)
+    || typeof record.routingRevision !== 'number'
+    || !Number.isSafeInteger(record.routingRevision) || record.routingRevision <= 0) {
+    throw invalidStateError('modelTarget 必须包含合法 ID 和正整数修订');
+  }
+  return Object.freeze({ targetId: record.targetId, routingRevision: record.routingRevision });
 }
 
 /** 严格校验持久化模型工作上下文，禁止旧 modelState 顶层结构静默恢复。 */

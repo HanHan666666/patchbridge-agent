@@ -22,6 +22,11 @@ import io.patchbridge.agent.core.model.ModelBlockStopEvent;
 import io.patchbridge.agent.core.model.ModelCall;
 import io.patchbridge.agent.core.model.ModelMessageStopEvent;
 import io.patchbridge.agent.core.model.ModelProvider;
+import io.patchbridge.agent.core.model.ModelProtocolAdapter;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.AgentMessage;
+import io.patchbridge.agent.core.model.target.*;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.ModelStreamListener;
@@ -50,6 +55,9 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Starter 装配级集成测试：验证“引入依赖即获得全部 /ai/** 端点”这一核心承诺， 以及权限过滤、Tool 调用、SSE 中继、会话乐观锁四条主链路。 模型上游用假
@@ -63,9 +71,15 @@ import java.nio.file.Paths;
             "spring.sql.init.mode=always",
             "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
             "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-                    "patchbridge-agent.model.base-url=http://localhost:0/v1",
-            "patchbridge-agent.model.model=fake-model",
-            "patchbridge-agent.model.context-window-tokens=128000",
+                    "patchbridge-agent.models.targets.fake-model.base-url=http://localhost:0/v1",
+            "patchbridge-agent.models.targets.fake-model.model=fake-model",
+            "patchbridge-agent.models.targets.fake-model.context-window-tokens=128000",
+            "patchbridge-agent.models.default-target=fake-model",
+            "patchbridge-agent.models.targets.fake-model.display-name=测试模型",
+            "patchbridge-agent.models.targets.fake-model.protocol=openai-chat-completions",
+            "patchbridge-agent.models.targets.fake-model.routing-revision=1",
+            "patchbridge-agent.models.targets.fake-model.image-input=true",
+            "patchbridge-agent.models.targets.fake-model.tool-calling=true",
             "patchbridge-agent.mcp.enabled=true",
             "patchbridge-agent.mcp.source=properties"
         })
@@ -270,16 +284,53 @@ class PatchBridgeAgentStarterIntegrationTest {
                 "Tool Core 事件经生产 Controller 序列化后必须逐帧匹配共享契约");
     }
 
-    /** 模型配置端点只公开服务端派生的窗口、80% 阈值和近期预算。 */
+    /** 模型目录只公开服务端派生的窗口、80% 阈值和近期预算。 */
     @Test
     void contextCompactionConfigurationExposesDerivedBudgets() throws Exception {
         login("ai:chat:use");
 
-        mockMvc.perform(get("/ai/model/config"))
+        mockMvc.perform(get("/ai/model/targets"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.contextWindowTokens").value(128000))
-                .andExpect(jsonPath("$.automaticThresholdTokens").value(102400))
-                .andExpect(jsonPath("$.keepRecentTokens").value(20000));
+                .andExpect(jsonPath("$.targets[0].configuration.contextWindowTokens").value(128000))
+                .andExpect(jsonPath("$.targets[0].configuration.automaticThresholdTokens").value(102400))
+                .andExpect(jsonPath("$.targets[0].configuration.keepRecentTokens").value(20000));
+    }
+
+    /** 会话切换必须由服务端历史生成候选，清除私有状态并禁止普通保存切回旧目标。 */
+    @Test
+    void savedModelHandoffPreservesHistoryAndRequiresExplicitSwitch() throws Exception {
+        login("ai:chat:use");
+        String source = newConversationJson("切换测试")
+                .replace("\"messages\":[]", "\"messages\":[" + textMessageJson("u1", "user", "原始问题") + "]")
+                .replace("\"modelState\":null", "\"modelState\":{\"format\":\"old/v1\",\"data\":{\"state\":\"opaque\"}}");
+        String id = objectMapper.readTree(mockMvc.perform(post("/ai/conversations")
+                        .contentType(MediaType.APPLICATION_JSON).content(source))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .path("conversation").path("conversationId").asText();
+
+        mockMvc.perform(post("/ai/conversations/" + id + "/model-target")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"revision\":0,\"target\":{\"targetId\":\"fake-model\","
+                                + "\"routingRevision\":1},\"tools\":[]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("MODEL_TARGET_MISMATCH"));
+
+        mockMvc.perform(post("/ai/conversations/" + id + "/model-target")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"revision\":0,\"target\":{\"targetId\":\"fake-messages\","
+                                + "\"routingRevision\":1},\"tools\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.conversation.revision").value(1))
+                .andExpect(jsonPath("$.conversation.title").value("切换测试"))
+                .andExpect(jsonPath("$.context.modelTarget.targetId").value("fake-messages"))
+                .andExpect(jsonPath("$.context.messages[0].blocks[0].text").value("原始问题"))
+                .andExpect(jsonPath("$.context.modelContext.modelState").value(org.hamcrest.Matchers.nullValue()));
+
+        String oldContext = objectMapper.readTree(source).path("context").toString();
+        mockMvc.perform(put("/ai/conversations/" + id).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"revision\":1,\"context\":" + oldContext + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("MODEL_TARGET_MISMATCH"));
     }
 
     /** 手动压缩端点复用当前模型，并原子返回摘要 usage 与 Provider 状态投影。 */
@@ -292,8 +343,8 @@ class PatchBridgeAgentStarterIntegrationTest {
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(
                                                 "{\"traceId\":\"trace-compact\","
-                                                    + "\"conversationId\":\"conversation-1\","
-                                                    + "\"request\":{\"trigger\":\"manual\","
+                                                    + ""
+                                                    + "\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"trigger\":\"manual\","
                                                     + "\"messagesToSummarize\":["
                                                     + textMessageJson("system-1", "system", "系统规则")
                                                     + ","
@@ -340,8 +391,8 @@ class PatchBridgeAgentStarterIntegrationTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"traceId\":\"trace-over-budget\","
-                                            + "\"conversationId\":\"conversation-1\","
-                                            + "\"request\":{\"trigger\":\"manual\","
+                                            + ""
+                                            + "\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"trigger\":\"manual\","
                                             + "\"messagesToSummarize\":["
                                             + textMessageJson("user-old", "user", oversized)
                                             + "],\"retainedMessages\":["
@@ -371,7 +422,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                                 post("/ai/model/stream")
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(
-                                                "{\"traceId\":\"t-2\",\"request\":{"
+                                                "{\"traceId\":\"t-2\",\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
                                                     + "\"responseMessageId\":\""
                                                     + responseMessageId
                                                     + "\",\"messages\":[{\"id\":\"user-1\","
@@ -385,6 +436,15 @@ class PatchBridgeAgentStarterIntegrationTest {
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
+    }
+
+    /** 原子创建测试会话所需的完整目标与空上下文。 */
+    static String newConversationJson(String title) {
+        String heading = title == null ? "" : "\"title\":\"" + title + "\",";
+        return "{" + heading + "\"context\":{\"messages\":[],"
+                + "\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
+                + "\"modelContext\":{\"checkpoint\":null,\"firstRetainedMessageId\":null,"
+                + "\"modelState\":null,\"usage\":null}}}";
     }
 
     /** 从仓库级 fixture 读取指定用例的标准事件序列。 */
@@ -441,7 +501,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                         post("/ai/model/stream")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"request\":{\"responseMessageId\":\"assistant-1\","
+                                        "{\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"responseMessageId\":\"assistant-1\","
                                             + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
                                             + "\"modelState\":null,\"tools\":[]}}"))
                 .andExpect(status().isBadRequest())
@@ -456,7 +516,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                         post("/ai/model/stream")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"request\":{\"responseMessageId\":\"assistant-1\","
+                                        "{\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"responseMessageId\":\"assistant-1\","
                                             + "\"messages\":[{\"id\":\"user-1\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"hi\"}]}]}}"))
                 .andExpect(status().isBadRequest())
@@ -471,7 +531,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                         post("/ai/model/stream")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"request\":{\"responseMessageId\":\"assistant-1\","
+                                        "{\"request\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"responseMessageId\":\"assistant-1\","
                                             + "\"messages\":[{\"id\":\"user-1\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"hi\"}]}],"
                                             + "\"modelState\":null,\"tools\":[],\"unexpected\":true}}"))
@@ -481,13 +541,13 @@ class PatchBridgeAgentStarterIntegrationTest {
 
     // ---------- Conversation ----------
 
-    /** 无请求体创建未命名会话仍是合法用法，不受严格契约影响。 */
+    /** 无请求体无法原子保存首轮上下文，必须明确拒绝。 */
     @Test
-    void conversationCreateWithoutBodyAllowed() throws Exception {
+    void conversationCreateWithoutBodyRejected() throws Exception {
         login("ai:chat:use");
         mockMvc.perform(post("/ai/conversations"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.conversation.revision").value(0));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
     }
 
     /** 有请求体时是严格契约：未知字段代表协议错配，必须 400。 */
@@ -519,7 +579,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                 mockMvc.perform(
                                 post("/ai/conversations")
                                         .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"title\":\"测试会话\"}"))
+                                        .content(newConversationJson("测试会话")))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.conversation.revision").value(0))
                         .andReturn()
@@ -531,7 +591,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"revision\":0,\"context\":{"
+                                        "{\"revision\":0,\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
                                             + "\"messages\":[{\"id\":\"m-user-1\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"hi\"}]}],"
                                             + "\"modelContext\":{\"checkpoint\":null,"
@@ -547,7 +607,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"revision\":0,\"context\":{"
+                                        "{\"revision\":0,\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
                                             + "\"messages\":[{\"id\":\"m-stale\",\"role\":\"user\","
                                             + "\"blocks\":[{\"type\":\"text\",\"text\":\"stale\"}]}],"
                                             + "\"modelContext\":{\"checkpoint\":null,"
@@ -574,12 +634,13 @@ class PatchBridgeAgentStarterIntegrationTest {
         login("ai:chat:use");
         ObjectMapper mapper = new ObjectMapper();
         String response = mockMvc.perform(post("/ai/conversations")
-                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                        .contentType(MediaType.APPLICATION_JSON).content(newConversationJson(null)))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         String id = mapper.readTree(response).path("conversation").path("conversationId").asText();
         ObjectNode body = mapper.createObjectNode();
         body.put("revision", 0);
         ObjectNode context = body.putObject("context");
+        context.putObject("modelTarget").put("targetId", "fake-model").put("routingRevision", 1);
         ArrayNode messages = context.putArray("messages");
         ObjectNode assistant = messages.addObject();
         assistant.put("id", "assistant").put("role", "assistant");
@@ -615,7 +676,7 @@ class PatchBridgeAgentStarterIntegrationTest {
                 mockMvc.perform(
                                 post("/ai/conversations")
                                         .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{}"))
+                                        .content(newConversationJson(null)))
                         .andExpect(status().isOk())
                         .andReturn()
                         .getResponse()
@@ -639,14 +700,14 @@ class PatchBridgeAgentStarterIntegrationTest {
         mockMvc.perform(
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"revision\":0,\"context\":{\"messages\":[]}}"))
+                                .content("{\"revision\":0,\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"messages\":[]}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
 
         mockMvc.perform(
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"context\":{\"messages\":[],\"modelState\":null}}"))
+                                .content("{\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},\"messages\":[],\"modelState\":null}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
     }
@@ -671,6 +732,31 @@ class PatchBridgeAgentStarterIntegrationTest {
     static class TestApp {}
 
     static class ToolsConfig {
+
+        /** 测试目录仍经过生产 Router，但把真实网络替换为共享事件夹具。 */
+        @Bean
+        public ModelTargetCatalog testModelTargetCatalog(ModelProvider fakeModelProvider) {
+            ModelProtocolAdapter adapter = new ModelProtocolAdapter() {
+                /** 夹具事件已经是领域协议，预检在本用例无需编码。 */
+                @Override public void validate(ModelRequest request) { }
+                /** 使用夹具验证 Router 到 HTTP SSE 的完整链路。 */
+                @Override public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
+                    return fakeModelProvider.stream(request, listener);
+                }
+                /** 夹具没有上游私有状态。 */
+                @Override public ModelState project(ModelState state, List<AgentMessage> messages) {
+                    if (state != null) throw new IllegalArgumentException("测试模型不支持私有状态");
+                    return null;
+                }
+            };
+            ModelTargetRef ref = new ModelTargetRef("fake-model", 1);
+            ResolvedModelTarget target = new ResolvedModelTarget(ref, "测试模型", "openai-chat-completions",
+                    true, true, true, new ContextCompactionSettings(128000, 20000, 12800), adapter);
+            ResolvedModelTarget second = new ResolvedModelTarget(
+                    new ModelTargetRef("fake-messages", 1), "测试 Messages", "anthropic-messages",
+                    true, true, true, new ContextCompactionSettings(64000, 12800, 6400), adapter);
+            return new ImmutableModelTargetCatalog(Arrays.asList(target, second), ref);
+        }
 
         /** 假模型 Provider：回放共享 fixture 对应的 Core 事件，验证生产 SSE 序列化。 */
         @Bean

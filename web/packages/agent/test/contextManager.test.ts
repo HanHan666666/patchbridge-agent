@@ -19,6 +19,7 @@ import type {
   ConversationContext,
   ModelContext,
 } from '../src/types';
+import { TEST_TARGET } from './testContext';
 
 /** 使用小窗口让测试文本可以稳定跨过保留预算。 */
 const CONFIGURATION: ContextCompactionConfiguration = Object.freeze({
@@ -45,6 +46,7 @@ function conversation(
 ): ConversationContext {
   return Object.freeze({
     messages: Object.freeze([...messages]),
+    modelTarget: TEST_TARGET,
     modelContext: Object.freeze({
       ...EMPTY_MODEL_CONTEXT,
       ...modelContext,
@@ -85,7 +87,7 @@ async function managerFor(
     createId: kind => `${kind}-${++sequence}`,
     now: () => Date.parse('2026-08-27T08:00:00.000Z'),
   });
-  await manager.loadConfiguration();
+  await manager.loadConfiguration(TEST_TARGET);
   return manager;
 }
 
@@ -404,6 +406,7 @@ describe('DefaultContextManager', () => {
     ], 0);
     const withoutUsage = Object.freeze({
       messages: firstInput.messages,
+      modelTarget: TEST_TARGET,
       modelContext: Object.freeze({
         ...EMPTY_MODEL_CONTEXT,
         usage: null,

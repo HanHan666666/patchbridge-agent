@@ -5,6 +5,8 @@ import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.model.ModelCall;
 import io.patchbridge.agent.core.model.ModelRequest;
 
+import io.patchbridge.agent.core.model.target.ModelAccessContext;
+import io.patchbridge.agent.core.model.target.ModelTargetException;
 import java.util.UUID;
 
 /**
@@ -47,7 +49,12 @@ public final class DefaultModelGateway implements ModelGateway {
         invocation.bindAssembler(assembler);
         final ModelCall upstream;
         try {
-            upstream = invocationPipeline.stream(request, context, assembler);
+            upstream = invocationPipeline.stream(request, context,
+                    context.getUser() == null ? ModelAccessContext.trustedJvm()
+                            : ModelAccessContext.authenticated(context.getUser()), assembler);
+        } catch (ModelTargetException e) {
+            invocation.discardAssembler();
+            throw e;
         } catch (ModelGatewayException e) {
             invocation.discardAssembler();
             throw e;

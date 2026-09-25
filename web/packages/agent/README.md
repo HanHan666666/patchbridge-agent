@@ -17,6 +17,7 @@ const controller = createAgentController({ endpoint: '/ai' });
 const unsubscribe = controller.subscribe(state => renderAgent(state));
 
 await controller.initialize();
+// 如需切换：await controller.switchModelTarget('部署目录中的目标 ID');
 await controller.sendMessage('查询当前告警设备');
 
 // 页面模块卸载时释放请求、Execution 和订阅。
@@ -25,7 +26,7 @@ controller.dispose();
 ```
 
 Controller 是 Browser Application Service，也是 `AgentState` 的唯一所有者。View 只订阅
-状态并调用具名用户意图，不应直接维护第二份消息、确认或流式状态。
+状态并调用具名用户意图，不应直接维护第二份消息、确认或流式状态。模型目标来自服务端脱敏目录，当前会话按 `ModelTargetRef` 路由；仅在空闲时调用 `switchModelTarget(targetId)`。
 
 ## Message + ContentBlock
 

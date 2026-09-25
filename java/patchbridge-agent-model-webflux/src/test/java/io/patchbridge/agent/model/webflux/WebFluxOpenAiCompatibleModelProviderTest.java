@@ -29,6 +29,8 @@ import io.patchbridge.agent.core.model.ModelStreamListener;
 import io.patchbridge.agent.core.model.ReasoningBlock;
 import io.patchbridge.agent.core.model.TextBlock;
 import io.patchbridge.agent.core.model.ToolCallBlock;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
+import io.patchbridge.agent.core.model.target.*;
 import io.patchbridge.agent.model.openai.OpenAiChatProtocol;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -68,6 +70,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>覆盖结构化流转换、厂商请求隔离、状态校验、HTTP 失败与取消竞争；测试通过 ExchangeFunction 注入可控响应，不启动端口，也不依赖真实模型服务。
  */
 class WebFluxOpenAiCompatibleModelProviderTest {
+    /** 所有请求经由同一个显式目标路由。 */
+    private static final ModelTargetRef REF = new ModelTargetRef("test-webflux", 1);
 
     /** 厂商 SSE 必须转换为 Core 事件，并按 responseMessageId 产生下一份 reasoning 状态。 */
     @Test
@@ -121,7 +125,7 @@ class WebFluxOpenAiCompatibleModelProviderTest {
         ModelRequest request = simpleRequest();
         DefaultModelGateway gateway =
                 new DefaultModelGateway(
-                        new ModelInvocationPipeline(provider(client), Collections.emptyList()));
+                        new ModelInvocationPipeline(router(provider(client)), Collections.emptyList()));
 
         ModelResponse response = gateway.invoke(request).await(Duration.ofSeconds(2));
 
@@ -172,7 +176,7 @@ class WebFluxOpenAiCompatibleModelProviderTest {
                                                 .build()));
         DefaultModelGateway gateway =
                 new DefaultModelGateway(
-                        new ModelInvocationPipeline(provider(client), Collections.emptyList()));
+                        new ModelInvocationPipeline(router(provider(client)), Collections.emptyList()));
 
         ModelInvocation invocation = gateway.invoke(simpleRequest());
         assertTrue(subscribed.await(2, TimeUnit.SECONDS));
@@ -225,7 +229,7 @@ class WebFluxOpenAiCompatibleModelProviderTest {
         ModelRequest incompatible =
                 new ModelRequest(
                         base.getResponseMessageId(),
-                        null,
+                        REF,
                         base.getMessages(),
                         base.getTools(),
                         new ModelState("other/v1", Collections.singletonMap("x", "y")),
@@ -415,12 +419,20 @@ class WebFluxOpenAiCompatibleModelProviderTest {
                         Collections.<ContentBlock>singletonList(new TextBlock("hi")));
         return new ModelRequest(
                 "response-1",
-                null,
+                REF,
                 Collections.singletonList(user),
                 Collections.emptyList(),
                 null,
                 null,
                 null);
+    }
+
+    /** Gateway 测试仍走生产 Router，避免单 Provider 旁路。 */
+    private static ModelProviderRouter router(WebFluxOpenAiCompatibleModelProvider provider) {
+        ResolvedModelTarget target = new ResolvedModelTarget(REF, "测试 WebFlux", "openai-chat-completions",
+                true, true, true, new ContextCompactionSettings(128000, 20000, 12800), provider);
+        return new ModelProviderRouter(new ImmutableModelTargetCatalog(
+                Collections.singletonList(target), REF), (access, selected) -> true);
     }
 
     /** 创建含 assistant tool-call 及对应 reasoning 状态的请求。 */
@@ -445,7 +457,7 @@ class WebFluxOpenAiCompatibleModelProviderTest {
                 Collections.<String, Object>singletonMap("assistant-prev", "历史思考"));
         return new ModelRequest(
                 "response-new",
-                null,
+                REF,
                 Arrays.asList(user, assistant),
                 Collections.emptyList(),
                 new ModelState(OpenAiChatProtocol.STATE_FORMAT, stateData),

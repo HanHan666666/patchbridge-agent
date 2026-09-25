@@ -4,7 +4,7 @@
 
 > 适用版本：`0.1.0-SNAPSHOT`。发布状态：source-only pre-release，当前没有发布到 Maven Central 或 npm 公共仓库；本文中的 Maven 和 Browser 接入都以本仓库源码、本地 Maven Reactor 和 Starter 内置 Bundle 为前提。
 
-> 文中的地址、账号、模型名、密钥和业务数据均为占位符。不要把占位符原样用于真实环境，也不要把任何真实凭据提交到仓库。
+> 文中的账号、密钥和业务数据示例均为占位符。DeepSeek Flash 的模型名与接口地址是可用示例，部署前仍须核对当前官方文档和账户能力；不要把任何真实凭据提交到仓库。
 
 > 本文面向实际接入 PatchBridge Agent 的 Java、前端、平台安全和运维人员。阅读本文不要求先了解项目设计历史；当前实施状态以[路线图](roadmap.md)为准，架构边界以[架构总览](architecture/overview.md)和 ADR 为准，具体行为以当前源码和测试为准。
 
@@ -114,7 +114,7 @@ Tool 路由、会话保存、取消后继续、异常分类与压缩预算缺口
 - [ADR-002：ModelState 生命周期所有权与显式会话连续状态重置](architecture/adr/0002-model-state-lifecycle.md)
 - [ADR-003：Browser Agent Runtime 生产级执行守卫](architecture/adr/0003-browser-runtime-guards.md)
 - [ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](architecture/adr/0004-context-compaction.md)
-- [ADR-005（Proposed）：可管理 ModelTarget、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
+- [ADR-005（Accepted）：部署模型目录、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
 - [可管理模型目标、按会话路由与显式切换技术方案](architecture/designs/model-target-registry-and-switching.md)
 - [Java 后端单次模型调用 API 设计](architecture/designs/java-model-gateway.md)
 - [v0.1 公开契约与安全默认值审计](releases/v0.1/audits/public-contract-and-security.md)

@@ -5,7 +5,7 @@
 ### 适用范围与设计边界
 
 <code>ModelGateway</code> 面向内容审核、分类、摘要、抽取和图片识别等“一次请求得到一个完整
-结果”的后端业务。它与 Browser Agent 共用 <code>ModelProvider</code> 和
+结果”的后端业务。它与 Browser Agent 共用 <code>ModelProviderRouter</code> 和
 <code>ModelInvocationPipeline</code>，但不会在 JVM 内启动 Agent Loop、自动执行 Tool、创建
 Conversation 或等待 Human-in-the-loop。
 
@@ -21,11 +21,15 @@ HTTP 请求本应用的 <code>/ai/model/stream</code>。默认调用只保留当
 import io.patchbridge.agent.core.invocation.ModelGateway;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelRequests;
+import io.patchbridge.agent.core.model.target.ModelAccessContext;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import io.patchbridge.agent.core.model.ModelResponse;
 
 import java.time.Duration;
 
+ModelTargetRef modelTargetRef = modelProviderRouter.defaultTarget(ModelAccessContext.trustedJvm());
 ModelRequest request = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则审核输入内容。")
         .userText(content)
         .maxTokens(300)
@@ -35,6 +39,8 @@ ModelResponse response = modelGateway.invoke(request)
         .await(Duration.ofSeconds(20));
 String reviewText = response.getText();
 ~~~
+
+`modelTargetRef` 必须来自目录中已授权的目标；此例使用注入的 `ModelProviderRouter` 取得部署默认目标，业务也可显式选择目录引用。目标 ID 和修订不能用上游模型名代替。无默认或目标不可用时调用明确失败，不自动换目标。
 
 <code>getText()</code> 只按顺序拼接普通 <code>TextBlock</code>，不会把 reasoning 混入正文。
 需要 usage、停止原因、完整 ContentBlock 或下一轮模型状态时，分别读取
@@ -52,6 +58,7 @@ String reviewText = response.getText();
 import io.patchbridge.agent.core.model.ImageSource;
 
 ModelRequest urlRequest = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则检查图片。")
         .userText("请描述图片并指出需要人工复核的风险。")
         .userImage(ImageSource.url(imageUrl))
@@ -59,6 +66,7 @@ ModelRequest urlRequest = ModelRequests.builder()
         .build();
 
 ModelRequest base64Request = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则检查图片。")
         .userText("请描述图片并指出需要人工复核的风险。")
         .userImage(ImageSource.base64("image/png", base64Data))
@@ -177,6 +185,7 @@ Controller 示例，可以整包删除；它不是 Starter 对外增加的框架
 
 ```java
 ModelRequest request = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则审核输入内容。")
         .userText(content)
         .maxTokens(300)
@@ -192,6 +201,7 @@ String result = response.getText();
 
 ```java
 ModelRequest urlRequest = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则检查图片。")
         .userText("请返回检查结果。")
         .userImage(ImageSource.url(imageUrl))
@@ -199,6 +209,7 @@ ModelRequest urlRequest = ModelRequests.builder()
         .build();
 
 ModelRequest base64Request = ModelRequests.builder()
+        .modelTarget(modelTargetRef)
         .systemText("按企业自己的规则检查图片。")
         .userText("请返回检查结果。")
         .userImage(ImageSource.base64(mediaType, base64Data))

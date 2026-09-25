@@ -21,6 +21,10 @@
     <dependencies>
         <dependency>
             <groupId>io.patchbridge.agent</groupId>
+            <artifactId>patchbridge-agent-model-anthropic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.patchbridge.agent</groupId>
             <artifactId>patchbridge-agent-core</artifactId>
         </dependency>
         <dependency>

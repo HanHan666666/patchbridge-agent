@@ -1,6 +1,7 @@
 package io.patchbridge.agent.starter.web;
 
 import io.patchbridge.agent.core.auth.CurrentUserProvider;
+import io.patchbridge.agent.core.model.target.ModelConversationService;
 import io.patchbridge.agent.core.conversation.Conversation;
 import io.patchbridge.agent.core.conversation.ConversationConflictException;
 import io.patchbridge.agent.core.conversation.ConversationContext;
@@ -48,6 +49,9 @@ public class ConversationController {
     /** 会话持久化端口，在存储边界再次执行 ownerKey 隔离。 */
     private final ConversationRepository repository;
 
+    /** 统一约束普通保存与显式切换的应用服务。 */
+    private final ModelConversationService modelConversations;
+
     /** 当前登录用户解析入口，身份只取自宿主可信安全上下文。 */
     private final CurrentUserResolver currentUser;
 
@@ -69,8 +73,9 @@ public class ConversationController {
             ConversationRepository repository,
             CurrentUserProvider userProvider,
             ConversationOwnerResolver ownerResolver,
-            PatchBridgeAgentProperties properties) {
+            PatchBridgeAgentProperties properties, ModelConversationService modelConversations) {
         this.repository = repository;
+        this.modelConversations = modelConversations;
         this.currentUser = new CurrentUserResolver(userProvider);
         this.ownerResolver = ownerResolver;
         this.listLimit = properties.getConversations().getListLimit();
@@ -91,21 +96,19 @@ public class ConversationController {
     }
 
     /**
-     * 在当前归属主体下新建空会话；首轮完整 Context 仍通过 PUT 保存。
+     * 在当前归属主体下原子创建完整首轮 Context。
      *
-     * <p>无请求体表示创建未命名会话；提供请求体时必须是严格契约
-     * （仅允许可选 title），未知字段由 DTO 校验统一拒绝。
+     * <p>请求体必须包含当前目标、完整消息和模型工作上下文；title 可选。
+     * 未知字段由 DTO 校验统一拒绝，避免创建空会话后异步 PUT 失败。
      */
     @PostMapping("/conversations")
     public Map<String, Object> create(
             @RequestBody(required = false) ConversationCreateRequest request) {
         UserContext user = currentUser.requiredUser();
-        String title = null;
-        if (request != null) {
-            request.validate();
-            title = request.getTitle();
-        }
-        Conversation conversation = repository.create(requiredOwnerKey(user), title);
+        if (request == null) throw new IllegalArgumentException("创建会话必须包含完整上下文");
+        request.validate();
+        Conversation conversation = modelConversations.create(user, request.getTitle(),
+                ConversationContextValues.fromValue(request.getContext()));
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("conversation", conversationView(conversation));
         return body;
@@ -137,8 +140,8 @@ public class ConversationController {
         request.validate();
         ConversationContext context = ConversationContextValues.fromValue(request.getContext());
         Conversation saved =
-                repository.save(
-                        requiredOwnerKey(user),
+                modelConversations.save(
+                        user,
                         id,
                         request.getRevision().longValue(),
                         request.getTitle(),
@@ -166,7 +169,7 @@ public class ConversationController {
     }
 
     /** 对外视图不回传 ownerKey 或 ModelContext；它们不属于列表展示元数据。 */
-    private Map<String, Object> conversationView(Conversation conversation) {
+    static Map<String, Object> conversationView(Conversation conversation) {
         Map<String, Object> view = new LinkedHashMap<String, Object>();
         view.put("conversationId", conversation.getConversationId());
         view.put("title", conversation.getTitle());

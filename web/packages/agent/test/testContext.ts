@@ -6,13 +6,33 @@
  */
 import type { ContextManager, PreparedModelContext } from '../src/contextManager';
 import type { ModelUsage } from '../src/clients/modelClient';
+import type { ModelTargetClient } from '../src/clients/modelTargetClient';
 import type {
   ContextCompactionConfiguration,
   ContextCompactionTrigger,
   ConversationContext,
   ModelContext,
   ModelState,
+  ModelTargetRef,
 } from '../src/types';
+
+/** 测试明确使用的目录身份。 */
+export const TEST_TARGET: ModelTargetRef = Object.freeze({ targetId: 'test-model', routingRevision: 1 });
+
+/** 不做切换的 Controller 测试共用可用目录。 */
+export function testModelTargetClient(): ModelTargetClient {
+  return {
+    catalog: async () => ({ defaultTarget: TEST_TARGET, targets: [{
+      ref: TEST_TARGET, displayName: '测试模型', protocol: 'test', imageInput: true,
+      toolCalling: true, configuration: {
+        contextWindowTokens: 128_000, automaticThresholdTokens: 102_400,
+        keepRecentTokens: 20_000, reservedOutputTokens: 12_800,
+      },
+    }] }),
+    switchDraft: async () => { throw new Error('该测试未执行模型切换'); },
+    switchConversation: async () => { throw new Error('该测试未执行模型切换'); },
+  };
+}
 
 /** 普通测试模型每次返回的明确 Provider 用量。 */
 export const TEST_MODEL_USAGE: ModelUsage = Object.freeze({
@@ -65,6 +85,7 @@ export function testContextManager(): ContextManager {
       }
       return Object.freeze({
         messages: conversation.messages,
+        modelTarget: conversation.modelTarget,
         modelContext: Object.freeze({
           ...conversation.modelContext,
           modelState,

@@ -4,7 +4,9 @@ import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.error.ModelGatewayException;
 import io.patchbridge.agent.core.interceptor.ModelCallInterceptor;
 import io.patchbridge.agent.core.model.ModelCall;
-import io.patchbridge.agent.core.model.ModelProvider;
+import io.patchbridge.agent.core.model.target.ModelProviderRouter;
+import io.patchbridge.agent.core.model.target.ModelAccessContext;
+import io.patchbridge.agent.core.model.target.ResolvedModelTarget;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStreamEvent;
 import io.patchbridge.agent.core.model.ModelStreamListener;
@@ -22,21 +24,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ModelInvocationPipeline {
 
     /** 实际模型协议与传输 Adapter。 */
-    private final ModelProvider provider;
+    private final ModelProviderRouter router;
 
     /** 构造时冻结的模型拦截器顺序。 */
     private final List<ModelCallInterceptor> interceptors;
 
     /** 创建不可变的模型调用管线快照。 */
     public ModelInvocationPipeline(
-            ModelProvider provider, List<ModelCallInterceptor> interceptors) {
-        this.provider = provider;
+            ModelProviderRouter router, List<ModelCallInterceptor> interceptors) {
+        this.router = router;
         this.interceptors = new ArrayList<ModelCallInterceptor>(interceptors);
     }
 
     /** 启动异步模型流并返回统一取消句柄。 before 按注册顺序进入，after 在完成、失败或取消时按相反顺序退出。 */
     public ModelCall stream(
             ModelRequest request, AiRequestContext context, ModelStreamListener listener) {
+        return stream(request, context, ModelAccessContext.authenticated(context.getUser()), listener);
+    }
+
+    /** Java 系统调用显式提供可信来源，HTTP 入口不得使用该来源替代用户认证。 */
+    public ModelCall stream(ModelRequest input, AiRequestContext context,
+            ModelAccessContext access, ModelStreamListener listener) {
+        ResolvedModelTarget target = router.resolve(input.getModelTarget(), access);
+        ModelRequest request = router.prepare(target, input);
         long start = System.currentTimeMillis();
         int entered = 0;
         try {
@@ -63,7 +73,7 @@ public final class ModelInvocationPipeline {
                 new TerminalListener(request, context, listener, start, entered);
         final ModelCall providerCall;
         try {
-            providerCall = provider.stream(request, terminal);
+            providerCall = target.getAdapter().stream(request, terminal);
         } catch (RuntimeException e) {
             terminal.failBeforeStart(e);
             throw e;

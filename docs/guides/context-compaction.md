@@ -28,15 +28,23 @@
 
 ### 1. 配置模型窗口
 
-模型上下文窗口必须显式配置：
+每个部署目标的上下文窗口都必须显式配置，不能从模型名推测：
 
 ~~~yaml
 patchbridge-agent:
-  model:
-    base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL}
-    model: ${PATCHBRIDGE_AGENT_MODEL}
-    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
-    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
+  models:
+    default-target: primary
+    targets:
+      primary:
+        display-name: 主模型
+        protocol: openai-chat-completions
+        routing-revision: 1
+        base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL}
+        model: ${PATCHBRIDGE_AGENT_MODEL}
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
 ~~~
 
 框架固定使用：
@@ -54,15 +62,16 @@ reservedOutputTokens      = floor(contextWindowTokens × 0.10)
 
 ~~~yaml
 patchbridge-agent:
-  model:
-    context-window-tokens: 128000
-    keep-recent-tokens: 16000
-    reserved-output-tokens: 16384
+  models:
+    targets:
+      primary:
+        context-window-tokens: 128000
+        keep-recent-tokens: 16000
+        reserved-output-tokens: 16384
 ~~~
 
 `keep-recent-tokens` 必须大于 0 且小于自动阈值；`reserved-output-tokens` 必须大于 0 且与自动
-阈值之和小于窗口。自动阈值不能配置；Browser 从 `GET /ai/model/config` 读取同一份服务端
-派生值。
+阈值之和小于窗口。自动阈值不能配置；Browser 从 `GET /ai/model/targets` 读取当前目标对应的服务端派生值。
 
 ### 最终窗口预算检查
 
@@ -134,7 +143,7 @@ if ((state.status === 'idle' || state.status === 'done' || state.status === 'err
 它列为剩余工作。近期消息仍会逐字出现在检查点之后，摘要只在关闭早期依赖时引用必要结论，
 不复制完整尾部。
 
-默认 OpenAI-compatible 请求已经开启流式 usage。缺失 usage、空摘要、状态投影失败和上游错误
+内置 OpenAI Chat 与 Anthropic Messages Adapter 都会把上游流式 usage 转为统一字段。缺失 usage、空摘要、状态投影失败和上游错误
 都会显式失败，不估算替代、不清空状态、不重试或换模型。
 
 成功压缩到下一次正常响应之间没有模型专用 tokenizer 基线，Browser 会按 UTF-8 字节上界

@@ -107,6 +107,8 @@ class PatchBridgeAgentElement extends HTMLElement {
   // 渲染缓存节点：connectedCallback 中创建，避免依赖构造时序
   /** 面板标题节点；动态 title 由当前 Controller 快照驱动重绘。 */
   private panelTitleEl!: HTMLElement;
+  /** 当前会话目标选择器；只展示服务端已授权的公开目录。 */
+  private modelTargetEl!: HTMLSelectElement;
   /** Header 中始终可见的上下文窗口占比摘要。 */
   private contextBadgeEl!: HTMLElement;
   /** 展示配置、检查点和手动压缩入口的上下文面板。 */
@@ -372,6 +374,7 @@ class PatchBridgeAgentElement extends HTMLElement {
 <section class="panel" part="panel">
   <header class="panel-header" part="header">
     <span class="panel-title" part="title"></span>
+    <select class="model-target-select" part="model-target-select" aria-label="模型目标"></select>
     <details class="context-panel" part="context-panel">
       <summary class="context-badge" part="context-badge">上下文待计量</summary>
       <div class="context-popover" part="context-details"></div>
@@ -446,6 +449,7 @@ class PatchBridgeAgentElement extends HTMLElement {
     this.attachmentBarEl = $('.attachment-bar');
     this.inputHintEl = $('.input-hint');
     this.panelTitleEl = $('.panel-title');
+    this.modelTargetEl = $('.model-target-select');
     this.contextBadgeEl = $('.context-badge');
     this.contextPopoverEl = $('.context-popover');
     // 登录失效卡片：跳转目标属于宿主配置，登录本身永远由宿主页面完成
@@ -456,6 +460,9 @@ class PatchBridgeAgentElement extends HTMLElement {
     // ---------- 用户意图 → Controller 调用（View 的全部“业务逻辑”） ----------
     $('.new-btn').addEventListener('click', () => {
       this.controller?.startNewConversation();
+    });
+    this.modelTargetEl.addEventListener('change', () => {
+      void this.controller?.switchModelTarget(this.modelTargetEl.value);
     });
     this.sendButtonEl.addEventListener('click', () => this.onSend());
     this.inputEl.addEventListener('keydown', event => {
@@ -623,6 +630,7 @@ class PatchBridgeAgentElement extends HTMLElement {
 
   private render(state: AgentState): void {
     this.panelTitleEl.textContent = this.panelTitle;
+    this.renderModelTargets(state);
     this.renderConversations(state);
     this.renderMessages(state);
     this.renderContextWindow(state);
@@ -632,6 +640,15 @@ class PatchBridgeAgentElement extends HTMLElement {
     this.renderErrorBar(state);
     this.renderAuthRequired(state);
     this.renderInputArea(state);
+  }
+
+  /** 目标显示和禁用状态完全由 Controller 快照决定，失败后恢复原选择。 */
+  private renderModelTargets(state: AgentState): void {
+    const selected = state.modelTarget?.targetId ?? '';
+    this.modelTargetEl.innerHTML = state.modelTargets.map(target =>
+      `<option value="${escapeHtml(target.ref.targetId)}"${target.ref.targetId === selected ? ' selected' : ''}>${escapeHtml(target.displayName)}</option>`,
+    ).join('');
+    this.modelTargetEl.disabled = busyLabel(state.status) != null || state.modelTargets.length === 0;
   }
 
   /**
@@ -1023,7 +1040,7 @@ const STYLES = `
   --patchbridge-agent-disabled-opacity: .5;
 }
 * { box-sizing: border-box; font-family: var(--patchbridge-agent-font-family); }
-button:focus-visible, textarea:focus-visible, summary:focus-visible, [data-conversation-id]:focus-visible {
+button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, [data-conversation-id]:focus-visible {
   outline: 2px solid currentColor; outline-offset: 2px;
 }
 .panel {
@@ -1045,6 +1062,13 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, [data-conve
   flex: 1; font-size: var(--patchbridge-agent-font-size-title);
   font-weight: var(--patchbridge-agent-font-weight-emphasis);
 }
+.model-target-select {
+  max-width: 180px; min-width: 110px; padding: 6px 8px;
+  color: var(--patchbridge-agent-color-on-primary);
+  background: var(--patchbridge-agent-color-header-button-hover);
+  border: 1px solid currentColor; border-radius: 6px;
+}
+.model-target-select:disabled { opacity: var(--patchbridge-agent-disabled-opacity); }
 .context-panel { position: relative; flex: none; }
 .context-badge {
   list-style: none; cursor: pointer; white-space: nowrap;

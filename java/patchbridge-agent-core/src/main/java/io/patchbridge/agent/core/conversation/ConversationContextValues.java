@@ -13,6 +13,7 @@ import io.patchbridge.agent.core.model.ToolCallBlock;
 import io.patchbridge.agent.core.model.ToolResultBlock;
 import io.patchbridge.agent.core.model.ToolResultStatus;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -40,10 +41,10 @@ public final class ConversationContextValues {
      */
     public static ConversationContext fromValue(Object value) {
         Map<String, Object> context = requireObject(value, "context");
-        requireFields(context, "context", "messages", "modelContext");
+        requireFields(context, "context", "messages", "modelTarget", "modelContext");
         List<AgentMessage> messages = fromMessagesValue(context.get("messages"));
         ModelContext modelContext = fromModelContextValue(context.get("modelContext"));
-        return new ConversationContext(messages, modelContext);
+        return new ConversationContext(messages, ModelTargetRef.fromValue(context.get("modelTarget")), modelContext);
     }
 
     /** 把会话上下文转换为可交给任意 JSON Adapter 的稳定值对象。 */
@@ -53,6 +54,7 @@ public final class ConversationContextValues {
         }
         Map<String, Object> value = new LinkedHashMap<String, Object>();
         value.put("messages", toMessagesValue(context.getMessages()));
+        value.put("modelTarget", context.getModelTarget().toValue());
         value.put("modelContext", toModelContextValue(context.getModelContext()));
         return value;
     }

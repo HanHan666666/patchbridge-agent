@@ -8,6 +8,7 @@ import io.patchbridge.agent.core.model.ReasoningBlock;
 import io.patchbridge.agent.core.model.TextBlock;
 import io.patchbridge.agent.core.model.ToolCallBlock;
 import io.patchbridge.agent.core.model.ToolResultBlock;
+import io.patchbridge.agent.core.model.ModelToolDefinition;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -20,20 +21,30 @@ import java.util.Map;
  * 低压缩率内容，与 Browser ContextManager 的估算口径一致。估算只用于摘要请求的
  * 预算检查，绝不替代 Provider 正常返回的 usage 计量。
  */
-final class ModelInputEstimator {
+public final class ModelInputEstimator {
 
     /** 工具类只承载静态估算逻辑，不允许实例化。 */
     private ModelInputEstimator() {
     }
 
     /** 估算一组消息的 token 上界；口径与 Browser 侧 estimateModelMessages 保持一致。 */
-    static int estimateMessages(Iterable<AgentMessage> messages) {
+    public static int estimateMessages(Iterable<AgentMessage> messages) {
         int bytes = 0;
         for (AgentMessage message : messages) {
             bytes += 32 + utf8Length(message.getId()) + utf8Length(message.getRole().name());
             for (ContentBlock block : message.getBlocks()) {
                 bytes += 16 + estimateBlock(block);
             }
+        }
+        return bytes;
+    }
+
+    /** 切换目标时将本轮真实工具目录纳入窗口预算，与 Browser 的目录估算同口径。 */
+    public static int estimateToolDefinitions(Iterable<ModelToolDefinition> tools) {
+        int bytes = 0;
+        for (ModelToolDefinition tool : tools) {
+            bytes = Math.addExact(bytes, 16 + utf8Length(tool.getName())
+                    + utf8Length(tool.getDescription()) + estimateJsonMap(tool.getInputSchema()));
         }
         return bytes;
     }
@@ -69,22 +80,22 @@ final class ModelInputEstimator {
         throw new IllegalArgumentException("未支持的上下文内容块: " + block.getClass().getName());
     }
 
-    /**
-     * 递归估算业务参数 Map 的序列化字节。
-     * Core 不依赖 JSON 库，这里按 UTF-8 字节与结构开销保守计数，与 JSON 序列化结果同量级。
-     */
+    /** Core 不依赖 JSON 库，按 JSON 字符串转义规则统计结构化值的字节。 */
     private static int estimateJsonMap(Map<String, Object> input) {
         if (input == null) {
             return 2;
         }
         int bytes = 2;
+        boolean first = true;
         for (Map.Entry<String, Object> entry : input.entrySet()) {
-            bytes += utf8Length(entry.getKey()) + 2 + estimateJsonValue(entry.getValue());
+            if (!first) bytes++;
+            first = false;
+            bytes = Math.addExact(bytes, jsonStringBytes(entry.getKey()) + 1 + estimateJsonValue(entry.getValue()));
         }
         return bytes;
     }
 
-    /** 递归估算 JSON 值字节：容器逐元素展开，标量按 toString 字节计入。 */
+    /** 递归估算 JSON 值字节；业务 Schema 已由模型定义保证为可序列化值。 */
     private static int estimateJsonValue(Object value) {
         if (value == null) {
             return 4;
@@ -94,12 +105,29 @@ final class ModelInputEstimator {
         }
         if (value instanceof Iterable) {
             int bytes = 2;
+            boolean first = true;
             for (Object element : (Iterable<?>) value) {
-                bytes += estimateJsonValue(element) + 1;
+                if (!first) bytes++;
+                first = false;
+                bytes = Math.addExact(bytes, estimateJsonValue(element));
             }
             return bytes;
         }
-        return utf8Length(String.valueOf(value));
+        return value instanceof String ? jsonStringBytes((String) value)
+                : utf8Length(String.valueOf(value));
+    }
+
+    /** 字符串逐字符计入引号与必须的 JSON 转义，避免 Schema 中特殊字符被低估。 */
+    private static int jsonStringBytes(String value) {
+        int bytes = 2;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '"' || ch == '\\' || ch == '\n' || ch == '\r' || ch == '\t'
+                    || ch == '\b' || ch == '\f') bytes += 2;
+            else if (ch < 0x20 || Character.isSurrogate(ch)) bytes += 6;
+            else bytes += utf8Length(String.valueOf(ch));
+        }
+        return bytes;
     }
 
     /** UTF-8 字节数；TextEncoder 语义的服务端等价实现。 */

@@ -23,8 +23,8 @@ public class PatchBridgeAgentProperties {
     /** 浏览器 Agent 的独占 MVC 命名空间；根路径表示拥有全部 MVC 路径。 */
     private String basePath = "/ai";
 
-    /** 默认 OpenAI-compatible Provider 的服务端配置。 */
-    private final Model model = new Model();
+    /** 唯一部署模型目录；替换 Catalog Bean 时整份退让。 */
+    private final Models models = new Models();
 
     /** 会话 HTTP Adapter 的查询边界。 */
     private final Conversations conversations = new Conversations();
@@ -61,8 +61,8 @@ public class PatchBridgeAgentProperties {
         this.basePath = basePath;
     }
 
-    /** 返回默认模型 Provider 配置。 */
-    public Model getModel() { return model; }
+    /** 返回多目标部署配置。 */
+    public Models getModels() { return models; }
 
     /** 返回会话 Adapter 配置。 */
     public Conversations getConversations() { return conversations; }
@@ -76,15 +76,70 @@ public class PatchBridgeAgentProperties {
     /** 返回管理端配置。 */
     public Admin getAdmin() { return admin; }
 
+    /** 只读部署目录，不与 JDBC 或其他来源合并。 */
+    public static class Models {
+        /** 显式新会话默认目标；无可用目标时允许为空。 */
+        private String defaultTarget;
+        /** 按稳定 ID 声明的完整目标。 */
+        private Map<String, Target> targets = new LinkedHashMap<String, Target>();
+        /** 返回显式默认 ID。 */
+        public String getDefaultTarget() { return defaultTarget; }
+        /** 配置默认 ID，装配时校验其启用状态。 */
+        public void setDefaultTarget(String value) { defaultTarget = value; }
+        /** 返回部署目标，由装配器复制成不可变运行目录。 */
+        public Map<String, Target> getTargets() { return targets; }
+        /** 替换整份目录，不进行合并或默认填充。 */
+        public void setTargets(Map<String, Target> value) {
+            if (value == null) throw new IllegalArgumentException("models.targets 不可为空");
+            targets = new LinkedHashMap<String, Target>(value);
+        }
+    }
+
     /** 模型网关：OpenAI-compatible 流式代理。凭据只存在服务端，浏览器不可见。 */
-    public static class Model {
+    public static class Target {
+        /** 用户可见名称。 */
+        private String displayName;
+        /** 返回用户可见名称。 */
+        public String getDisplayName() { return displayName; }
+        /** 在部署配置中明确设置该值。 */
+        public void setDisplayName(String value) { displayName = value; }
+        /** 必须显式选择的协议 Adapter ID。 */
+        private String protocol;
+        /** 返回必须显式选择的协议 Adapter ID。 */
+        public String getProtocol() { return protocol; }
+        /** 在部署配置中明确设置该值。 */
+        public void setProtocol(String value) { protocol = value; }
+        /** 配置语义修订；更换协议、账户、模型或窗口时必须递增。 */
+        private Long routingRevision;
+        /** 返回配置语义修订；更换协议、账户、模型或窗口时必须递增。 */
+        public Long getRoutingRevision() { return routingRevision; }
+        /** 在部署配置中明确设置该值。 */
+        public void setRoutingRevision(Long value) { routingRevision = value; }
+        /** 是否允许普通调用。 */
+        private boolean enabled = true;
+        /** 返回是否允许普通调用。 */
+        public boolean isEnabled() { return enabled; }
+        /** 在部署配置中明确设置该值。 */
+        public void setEnabled(boolean value) { enabled = value; }
+        /** 明确声明图片能力，不能按模型名猜测。 */
+        private Boolean imageInput;
+        /** 返回明确声明图片能力，不能按模型名猜测。 */
+        public Boolean getImageInput() { return imageInput; }
+        /** 在部署配置中明确设置该值。 */
+        public void setImageInput(Boolean value) { imageInput = value; }
+        /** 明确声明工具能力。 */
+        private Boolean toolCalling;
+        /** 返回明确声明工具能力。 */
+        public Boolean getToolCalling() { return toolCalling; }
+        /** 在部署配置中明确设置该值。 */
+        public void setToolCalling(Boolean value) { toolCalling = value; }
         /** OpenAI-compatible base-url（如 https://api.deepseek.com/v1）。 */
         private String baseUrl;
 
         /** 只保存在服务端的上游 Bearer 凭据；目标网关无需认证时可空。 */
         private String apiKey;
 
-        /** Browser 未覆盖时使用的默认模型名。 */
+        /** 目标绑定的上游模型名，Browser 无权覆盖。 */
         private String model;
 
         /** 必须与当前模型能力一致的上下文窗口；不提供默认值以避免错误自动压缩。 */
@@ -130,7 +185,7 @@ public class PatchBridgeAgentProperties {
         public void setContextWindowTokens(Integer contextWindowTokens) {
             if (contextWindowTokens == null || contextWindowTokens.intValue() <= 0) {
                 throw new IllegalArgumentException(
-                        "patchbridge-agent.model.context-window-tokens 必须大于 0");
+                        "patchbridge-agent.models.targets.context-window-tokens 必须大于 0");
             }
             this.contextWindowTokens = contextWindowTokens;
         }
@@ -142,7 +197,7 @@ public class PatchBridgeAgentProperties {
         public void setKeepRecentTokens(Integer keepRecentTokens) {
             if (keepRecentTokens == null || keepRecentTokens.intValue() <= 0) {
                 throw new IllegalArgumentException(
-                        "patchbridge-agent.model.keep-recent-tokens 必须大于 0");
+                        "patchbridge-agent.models.targets.keep-recent-tokens 必须大于 0");
             }
             this.keepRecentTokens = keepRecentTokens;
         }
@@ -154,7 +209,7 @@ public class PatchBridgeAgentProperties {
         public void setReservedOutputTokens(Integer reservedOutputTokens) {
             if (reservedOutputTokens == null || reservedOutputTokens.intValue() <= 0) {
                 throw new IllegalArgumentException(
-                        "patchbridge-agent.model.reserved-output-tokens 必须大于 0");
+                        "patchbridge-agent.models.targets.reserved-output-tokens 必须大于 0");
             }
             this.reservedOutputTokens = reservedOutputTokens;
         }
@@ -166,7 +221,7 @@ public class PatchBridgeAgentProperties {
         public void setConnectTimeoutMs(int connectTimeoutMs) {
             if (connectTimeoutMs < 0) {
                 throw new IllegalArgumentException(
-                        "patchbridge-agent.model.connect-timeout-ms 不能为负数");
+                        "patchbridge-agent.models.targets.connect-timeout-ms 不能为负数");
             }
             this.connectTimeoutMs = connectTimeoutMs;
         }
@@ -178,7 +233,7 @@ public class PatchBridgeAgentProperties {
         public void setReadTimeoutMs(int readTimeoutMs) {
             if (readTimeoutMs < 0) {
                 throw new IllegalArgumentException(
-                        "patchbridge-agent.model.read-timeout-ms 不能为负数");
+                        "patchbridge-agent.models.targets.read-timeout-ms 不能为负数");
             }
             this.readTimeoutMs = readTimeoutMs;
         }

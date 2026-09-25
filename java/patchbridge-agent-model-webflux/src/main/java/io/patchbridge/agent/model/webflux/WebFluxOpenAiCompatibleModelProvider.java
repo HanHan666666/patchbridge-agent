@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * ModelProvider，才能启用该适配器。 Reactor 类型不会穿透 Core SPI，取消操作也只通过 ModelCall 暴露。
  */
 public final class WebFluxOpenAiCompatibleModelProvider
-        implements ModelProvider, ModelStateProjector {
+        implements io.patchbridge.agent.core.model.ModelProtocolAdapter {
 
     /** Spring 解析 SSE data 时需要保留的泛型类型。 */
     private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE =
@@ -71,6 +71,9 @@ public final class WebFluxOpenAiCompatibleModelProvider
      *
      * <p>每条厂商 data 在 Provider 内转换为结构化 Core 事件，结束标记不会透传。 取消调用只终止上游订阅，不发送容易被误判为模型故障的终止回调。
      */
+    /** 切换和路由在网络调用前使用同一请求编码器验证。 */
+    public void validate(ModelRequest request) { protocol.prepare(request, config.getDefaultModel()); }
+
     @Override
     public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
         if (request == null) {
@@ -80,7 +83,7 @@ public final class WebFluxOpenAiCompatibleModelProvider
             throw new ModelGatewayException("模型流监听器不可为空", false);
         }
 
-        String model = isBlank(request.getModel()) ? config.getDefaultModel() : request.getModel();
+        String model = config.getDefaultModel();
         OpenAiChatProtocol.PreparedRequest prepared = protocol.prepare(request, model);
         OpenAiChatProtocol.Decoder decoder =
                 protocol.decoder(request, prepared.getRetainedReasoning());

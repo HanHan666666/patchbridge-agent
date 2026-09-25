@@ -21,6 +21,10 @@ import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.ModelStreamListener;
 import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.TextBlock;
+import io.patchbridge.agent.core.model.ModelProtocolAdapter;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
+import io.patchbridge.agent.core.model.target.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
@@ -63,20 +67,14 @@ class ModelGatewayAutoConfigurationIntegrationTest {
                                     WebMvcAutoConfiguration.class,
                                     JacksonAutoConfiguration.class,
                                     PatchBridgeAgentAutoConfiguration.class))
-                    .withBean(ModelProvider.class, SuccessfulModelProvider::new)
+                    .withBean(ModelTargetCatalog.class, ModelGatewayAutoConfigurationIntegrationTest::testCatalog)
                     .withBean(CurrentUserProvider.class, () -> mock(CurrentUserProvider.class))
                     .withBean(
                             ConversationRepository.class,
                             () -> mock(ConversationRepository.class))
                     .withBean(AuditSink.class, () -> mock(AuditSink.class))
-                    .withBean(
-                            ModelStateProjector.class,
-                            () -> (state, retainedMessages) -> state)
                     .withPropertyValues(
-                            "patchbridge-agent.mcp.enabled=false",
-                            "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                            "patchbridge-agent.model.model=test-model",
-                            "patchbridge-agent.model.context-window-tokens=128000");
+                            "patchbridge-agent.mcp.enabled=false");
 
     /** 引入 Starter 后应只有一个公共 ModelGateway，且默认实现来自不依赖 Spring 的 Core。 */
     @Test
@@ -191,12 +189,33 @@ class ModelGatewayAutoConfigurationIntegrationTest {
                         Collections.singletonList(new TextBlock("hello")));
         return new ModelRequest(
                 "assistant-1",
-                "test-model",
+                new ModelTargetRef("test-model-target", 1),
                 Collections.singletonList(userMessage),
                 Collections.emptyList(),
                 null,
                 null,
                 16);
+    }
+
+    /** 宿主目录替换保持 Gateway 共用 Router，同时让该测试无需外部模型网络。 */
+    private static ModelTargetCatalog testCatalog() {
+        ModelTargetRef ref = new ModelTargetRef("test-model-target", 1);
+        ModelProvider provider = new SuccessfulModelProvider();
+        ModelProtocolAdapter adapter = new ModelProtocolAdapter() {
+            /** 测试 Provider 无额外厂商编码规则。 */
+            @Override public void validate(ModelRequest request) { }
+            /** 调用原测试 Provider 产出完整结构化响应。 */
+            @Override public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
+                return provider.stream(request, listener);
+            }
+            /** 测试输入不使用私有连续状态。 */
+            @Override public ModelState project(ModelState state, java.util.List<AgentMessage> messages) {
+                return state;
+            }
+        };
+        ResolvedModelTarget target = new ResolvedModelTarget(ref, "测试模型", "test", true,
+                true, true, new ContextCompactionSettings(128000, 20000, 12800), adapter);
+        return new ImmutableModelTargetCatalog(Collections.singletonList(target), ref);
     }
 
     /**

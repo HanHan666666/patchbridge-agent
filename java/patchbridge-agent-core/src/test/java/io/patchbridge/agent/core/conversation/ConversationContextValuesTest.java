@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.conversation;
 
+import io.patchbridge.agent.core.model.ModelTestTargets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -33,6 +34,7 @@ class ConversationContextValuesTest {
                                         MessageRole.USER,
                                         Collections.<ContentBlock>singletonList(
                                                 new TextBlock("你好")))),
+                        ModelTestTargets.REF,
                         new ModelContext(
                                 null,
                                 null,

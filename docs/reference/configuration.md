@@ -10,14 +10,19 @@
 | --- | --- | --- |
 | <code>enabled</code> | <code>true</code> | false 时不装配整个 Starter |
 | <code>base-path</code> | <code>/ai</code> | 匹配 <code>/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*</code> 或根路径 <code>/</code>；相对路径与尾斜杠绑定期失败。该前缀是 Starter 独占命名空间：宿主 Controller 不得映射到该空间内，否则启动失败；<code>/</code> 表示全部 MVC 路径归 Starter 所有 |
-| <code>model.base-url</code> | 无 | 默认 Provider 必填；绝对 HTTP(S)，禁止 user-info、query、fragment |
-| <code>model.api-key</code> | 无 | 可空，取决于上游网关 |
-| <code>model.model</code> | 无 | 默认 Provider 必填、不可空白 |
-| <code>model.context-window-tokens</code> | 无 | 必填安全正整数；当前模型上下文窗口。自动压缩阈值固定派生为窗口的 80%，框架不按模型名猜测 |
-| <code>model.keep-recent-tokens</code> | <code>min(20000, floor(context-window-tokens × 20%))</code> | 可选安全正整数；压缩后保留近期真实消息的 token 预算，必须小于自动压缩阈值 |
-| <code>model.reserved-output-tokens</code> | <code>floor(context-window-tokens × 10%)</code> | 可选安全正整数；为模型输出预留的窗口容量，与 80% 阈值之和必须小于窗口 |
-| <code>model.connect-timeout-ms</code> | <code>10000</code> | 大于等于 0；0 表示无限 |
-| <code>model.read-timeout-ms</code> | <code>300000</code> | 大于等于 0；0 表示无限 |
+| <code>models.default-target</code> | 无 | 新草稿与显式默认 Java 调用的目标 ID；若声明必须指向启用目标 |
+| <code>models.targets.&lt;id&gt;.display-name</code> | 无 | 必填，目录中向用户展示的非空名称；ID 为 1–64 字符的字母、数字、点、下划线或连字符 |
+| <code>models.targets.&lt;id&gt;.protocol</code> | 无 | 必填；当前内置 <code>openai-chat-completions</code>、<code>anthropic-messages</code> |
+| <code>models.targets.&lt;id&gt;.routing-revision</code> | 无 | 必填正安全整数；协议、账户、模型、能力或窗口语义改变时由部署者递增 |
+| <code>models.targets.&lt;id&gt;.enabled</code> | <code>true</code> | 关闭时普通调用、默认目标选择和会话续跑均明确失败 |
+| <code>models.targets.&lt;id&gt;.image-input</code> / <code>tool-calling</code> | 无 | 必须明确声明当前目标的输入能力；handoff 按能力预检 |
+| <code>models.targets.&lt;id&gt;.base-url</code> | 无 | 必填绝对 HTTP(S)，禁止 user-info、query、fragment；填服务根路径，Adapter 追加固定协议路径 |
+| <code>models.targets.&lt;id&gt;.api-key</code> | 无 | 服务端出站凭据；Anthropic Messages 必填，OpenAI-compatible 可由无认证网关省略；建议环境变量或宿主密钥系统注入 |
+| <code>models.targets.&lt;id&gt;.model</code> | 无 | 必填上游模型名，Browser 无权覆盖 |
+| <code>models.targets.&lt;id&gt;.context-window-tokens</code> | 无 | 必填正整数，按该目标的实际窗口配置；框架不从模型名猜测 |
+| <code>models.targets.&lt;id&gt;.keep-recent-tokens</code> | <code>min(20000, floor(window × 20%))</code> | 可选正整数，须小于该目标自动阈值 |
+| <code>models.targets.&lt;id&gt;.reserved-output-tokens</code> | <code>floor(window × 10%)</code> | 可选正整数，与自动阈值之和须小于窗口 |
+| <code>models.targets.&lt;id&gt;.connect-timeout-ms</code> / <code>read-timeout-ms</code> | <code>10000</code> / <code>300000</code> | 大于等于 0；0 表示无限 |
 | <code>conversations.list-limit</code> | <code>50</code> | 必须大于 0 |
 | <code>audit.enabled</code> | <code>true</code> | false 才停止审计写入 |
 | <code>audit.payload-mode</code> | <code>metadata-only</code> | 仅 full、metadata-only、none |
@@ -32,10 +37,11 @@
 
 <code>audit.payload-mode=full</code> 才组装请求/响应摘要，并仍经过 <code>AuditRedactor</code>。metadata-only 和 none 当前都不保存 payload 摘要，但仍保存调用元数据；完全关闭需使用 <code>audit.enabled=false</code>。
 
-### 上下文窗口与压缩预算
+### 部署模型目录与每目标窗口
 
-`model.context-window-tokens` 是整个 Starter 的硬配置，包括使用自定义 Provider 的场景。
-服务端派生并通过 `GET {basePath}/model/config` 返回唯一参数：
+默认 Catalog 只读取 `patchbridge-agent.models`，不与 JDBC 或旧 `patchbridge-agent.model.*` 合并。宿主提供完整替换的 `ModelTargetCatalog` Bean 时，YAML 目标不再参与路由。每次请求携带精确 `ModelTargetRef`；目标停用、修订变化或无权限时不回退到默认目标。当前不提供在线模型 CRUD 或密钥加密存储。部署更改目标语义时须推进 `routing-revision`；旧会话需用户显式处理，不自动迁移。
+
+每个目标的窗口派生为：
 
 ~~~text
 automaticThresholdTokens = floor(contextWindowTokens × 0.80)
@@ -43,30 +49,36 @@ keepRecentTokens          = min(20_000, floor(contextWindowTokens × 0.20))
 reservedOutputTokens      = floor(contextWindowTokens × 0.10)
 ~~~
 
-自动阈值不开放配置，避免不同 Browser 使用不同触发点。128,000 token 窗口对应 102,400
-自动阈值、默认 20,000 近期预算与 12,800 输出预留；32,000 token 窗口对应 25,600 阈值、
-6,400 近期预算与 3,200 输出预留。如果显式设置 `model.keep-recent-tokens`，该值必须大于 0
-且小于自动阈值；如果显式设置 `model.reserved-output-tokens`，该值必须大于 0 且与自动阈值
-之和小于窗口，非法配置在 `ContextCompactionSettings` 构造阶段失败。
-
-输出预留是模型输入最终预算（窗口 − 输出预留）的唯一派生来源：Browser 的最终窗口检查
-（工作消息、system 指令、本轮 Tool 定义）与服务端摘要请求预算都使用它，
-任何一层不得另行推导。
+显式预算必须在 `ContextCompactionSettings` 构造期通过边界校验。`GET {basePath}/model/targets` 只返回已授权目标、公开能力、上述四项窗口参数和默认引用，不公开 endpoint、上游模型或凭据。Browser 按会话当前目标选用其配置，用于自动压缩、最终输入预算与摘要预算。
 
 ~~~yaml
 patchbridge-agent:
-  model:
-    base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL}
-    model: ${PATCHBRIDGE_AGENT_MODEL}
-    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
-    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
-    # 只有明确需要改变默认近期预算时才配置
-    keep-recent-tokens: 16000
+  models:
+    default-target: deepseek-anthropic
+    targets:
+      deepseek-anthropic:
+        display-name: DeepSeek Flash · Messages
+        protocol: anthropic-messages
+        routing-revision: 1
+        base-url: https://api.deepseek.com/anthropic
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
+      deepseek-openai:
+        display-name: DeepSeek Flash · Chat
+        protocol: openai-chat-completions
+        routing-revision: 1
+        base-url: https://api.deepseek.com
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
 ~~~
 
-摘要固定使用当前模型。缺失正常响应 usage、摘要失败或 Provider 状态投影失败均显式失败，
-没有字符估算替代、重试、换模型或清空状态路径。详细使用方式见
-[《使用上下文压缩》](../guides/context-compaction.md)。
+`context-window-tokens` 必须由实际账户/模型能力确认后注入；示例不提供猜测值。密钥不得写入 Git。摘要固定使用会话目标；缺少正常响应 usage、摘要失败或状态投影失败都明确失败，不更换模型。具体使用见[上下文压缩指南](../guides/context-compaction.md)。
 
 ### MCP Server 子配置
 

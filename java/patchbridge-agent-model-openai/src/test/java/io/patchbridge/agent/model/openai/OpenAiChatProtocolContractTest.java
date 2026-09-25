@@ -1,5 +1,7 @@
 package io.patchbridge.agent.model.openai;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -346,7 +348,7 @@ class OpenAiChatProtocolContractTest {
             String responseMessageId, List<AgentMessage> messages, ModelState state) {
         return new ModelRequest(
                 responseMessageId,
-                null,
+                new ModelTargetRef("test-openai", 1),
                 messages,
                 Collections.emptyList(),
                 state,

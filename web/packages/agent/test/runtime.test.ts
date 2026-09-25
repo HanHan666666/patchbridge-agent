@@ -35,6 +35,7 @@ import type {
 } from '../src/types';
 import {
   TEST_MODEL_USAGE,
+  TEST_TARGET,
   testContextManager,
   testModelContext,
 } from './testContext';
@@ -148,6 +149,7 @@ function baseInput(
         role: 'user',
         blocks: [{ type: 'text', text: '查询设备' }],
       }],
+      modelTarget: TEST_TARGET,
       modelContext: testModelContext(modelState),
     },
     toolSnapshot,
@@ -1314,10 +1316,10 @@ describe('DefaultAgentRuntime', () => {
     model.scripts = [toolResponse('local.query')];
     const { snapshot, invocations } = createToolSnapshot([toolNamed('local.query')]);
     const manager = new DefaultContextManager({
-      configuration: async () => testContextManager().getConfiguration(),
+      configuration: async () => testContextManager().getConfiguration(TEST_TARGET),
       compact: async () => { throw new Error('本测试不应再次压缩'); },
     });
-    await manager.loadConfiguration();
+    await manager.loadConfiguration(TEST_TARGET);
     const input = unverifiedInput(snapshot);
     const restored: AgentRunInput = {
       ...input,

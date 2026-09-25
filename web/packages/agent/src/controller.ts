@@ -15,6 +15,9 @@
  * </ul>
  */
 import type { ConversationClient } from './clients/conversationClient';
+import type { ModelTargetClient } from './clients/modelTargetClient';
+import { sameTarget } from './clients/modelTargetClient';
+import { toModelTools } from './runtime';
 import type { ContextManager } from './contextManager';
 import type {
   AgentEngine,
@@ -43,6 +46,7 @@ import type {
   AgentStatus,
   ContentBlock,
   ImageAttachment,
+  ModelTargetRef,
 } from './types';
 import {
   snapshotAgentMessage,
@@ -54,6 +58,8 @@ import {
 export interface AgentControllerOptions {
   engine: AgentEngine;
   conversations: ConversationClient;
+  /** 目录、草稿及保存会话切换共用的服务端端口。 */
+  modelTargets: ModelTargetClient;
   tools: ToolRegistry;
   /** 自动与手动压缩共享的模型上下文管理器。 */
   contextManager: ContextManager;
@@ -73,6 +79,8 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   private readonly engine: AgentEngine;
   /** 会话列表与原子 Context 持久化端口。 */
   private readonly conversations: ConversationClient;
+  /** 统一模型目标目录和显式切换入口。 */
+  private readonly modelTargets: ModelTargetClient;
   /** 所有 Tool 来源与执行路由的唯一 Registry。 */
   private readonly tools: ToolRegistry;
   /** 模型窗口配置、边界选择和摘要调用的统一入口。 */
@@ -115,6 +123,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
   constructor(options: AgentControllerOptions) {
     this.engine = options.engine;
     this.conversations = options.conversations;
+    this.modelTargets = options.modelTargets;
     this.tools = options.tools;
     this.contextManager = options.contextManager;
     this.toolInspection = new ExecutionAwareToolInspectionSource(options.tools);
@@ -135,6 +144,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     return {
       ...this.state,
       conversations: [...this.state.conversations],
+      modelTargets: [...this.state.modelTargets],
       messages: [...this.state.messages],
     };
   }
@@ -152,13 +162,18 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     const generation = this.beginNavigation();
     this.dispatch({ type: 'CONVERSATIONS_LOADING_STARTED' });
     try {
-      const configuration = await this.contextManager.loadConfiguration(
-        this.navigationAbort?.signal,
-      );
+      const catalog = await this.modelTargets.catalog(this.navigationAbort?.signal);
       if (generation !== this.navigationGeneration || this.disposed) {
         return;
       }
-      this.dispatch({ type: 'CONTEXT_CONFIGURATION_LOADED', configuration });
+      this.dispatch({ type: 'MODEL_TARGETS_LOADED', targets: catalog.targets,
+        defaultTarget: catalog.defaultTarget });
+      if (catalog.defaultTarget != null) {
+        const configuration = await this.contextManager.loadConfiguration(
+          catalog.defaultTarget, this.navigationAbort?.signal);
+        if (generation !== this.navigationGeneration || this.disposed) return;
+        this.dispatch({ type: 'CONTEXT_CONFIGURATION_LOADED', configuration });
+      }
       const conversations = await this.conversations.list(
         this.navigationAbort?.signal,
       );
@@ -207,6 +222,12 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     const generation = this.beginNavigation();
     this.dispatch({ type: 'CONVERSATION_LOADING_STARTED' });
     try {
+      if (this.state.modelTargets.length === 0) {
+        const catalog = await this.modelTargets.catalog(this.navigationAbort?.signal);
+        if (generation !== this.navigationGeneration || this.disposed) return;
+        this.dispatch({ type: 'MODEL_TARGETS_LOADED', targets: catalog.targets,
+          defaultTarget: catalog.defaultTarget });
+      }
       const detail = await this.conversations.get(
         id,
         this.navigationAbort?.signal,
@@ -214,6 +235,13 @@ export class DefaultAgentController implements PatchBridgeAgentController {
       if (generation !== this.navigationGeneration || this.disposed) {
         return;
       }
+      if (!this.state.modelTargets.some(target => sameTarget(target.ref, detail.context.modelTarget))) {
+        throw invalidStateError('会话模型目标不可用或配置修订已变化');
+      }
+      const configuration = await this.contextManager.loadConfiguration(
+        detail.context.modelTarget, this.navigationAbort?.signal);
+      if (generation !== this.navigationGeneration || this.disposed) return;
+      this.dispatch({ type: 'CONTEXT_CONFIGURATION_LOADED', configuration });
       this.writeLastConversationId(id);
       this.dispatch({
         type: 'CONVERSATION_LOADED',
@@ -231,6 +259,45 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.beginNavigation();
     this.writeLastConversationId(null);
     this.dispatch({ type: 'NEW_CONVERSATION_STARTED' });
+  }
+
+  /** 空闲时显式切换模型目标；服务端先检查完整上下文和工具目录。 */
+  async switchModelTarget(targetId: string): Promise<void> {
+    if (this.disposed || !this.idleForSending()) {
+      throw invalidStateError('只有 Agent 空闲时才能切换模型目标');
+    }
+    const target = this.state.modelTargets.find(item => item.ref.targetId === targetId);
+    if (target == null) throw invalidStateError('模型目标不可用');
+    const current = this.requireCurrentModelTarget();
+    if (sameTarget(current, target.ref)) return;
+    const source = snapshotConversationContext({
+      messages: this.state.messages, modelTarget: current, modelContext: this.state.modelContext,
+    });
+    const conversation = this.state.conversation;
+    const generation = this.beginNavigation();
+    this.dispatch({ type: 'CONVERSATION_LOADING_STARTED' });
+    try {
+      // 已保存会话切换会在服务端提交；提交前先确认新窗口可读取，避免提交后配置请求失败造成界面仍显示旧目标。
+      const configuration = await this.contextManager.loadConfiguration(
+        target.ref, this.navigationAbort?.signal);
+      if (generation !== this.navigationGeneration || this.disposed) return;
+      const snapshot = await this.tools.refresh();
+      if (generation !== this.navigationGeneration || this.disposed) return;
+      const tools = toModelTools(snapshot.tools);
+      const switched = conversation == null
+        ? { conversation: null, context: await this.modelTargets.switchDraft(
+          source, target.ref, tools, this.navigationAbort?.signal) }
+        : await this.modelTargets.switchConversation(conversation.conversationId,
+          conversation.revision, target.ref, tools, this.navigationAbort?.signal);
+      if (generation !== this.navigationGeneration || this.disposed) return;
+      if (!sameTarget(switched.context.modelTarget, target.ref)) {
+        throw invalidStateError('服务端切换结果的模型目标不一致');
+      }
+      this.dispatch({ type: 'MODEL_TARGET_SWITCHED', context: switched.context,
+        conversation: switched.conversation, configuration });
+    } catch (cause) {
+      this.failNavigation(generation, cause);
+    }
   }
 
   /** 删除指定会话；删除当前会话时同时收敛本地状态。 */
@@ -277,6 +344,17 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     });
 
     try {
+      if (this.state.modelTarget == null) {
+        const catalog = await this.modelTargets.catalog(this.navigationAbort?.signal);
+        if (!this.isCurrentRun(runGeneration)) return;
+        this.dispatch({ type: 'MODEL_TARGETS_LOADED', targets: catalog.targets,
+          defaultTarget: catalog.defaultTarget });
+        if (catalog.defaultTarget == null) throw invalidStateError('当前用户没有可用的默认模型目标');
+        const configuration = await this.contextManager.loadConfiguration(
+          catalog.defaultTarget, this.navigationAbort?.signal);
+        if (!this.isCurrentRun(runGeneration)) return;
+        this.dispatch({ type: 'CONTEXT_CONFIGURATION_LOADED', configuration });
+      }
       // 每轮刷新并冻结统一 Tool 快照：Engine 与 Inspector 消费同一 revision。
       const toolSnapshot = await this.tools.refresh();
       if (!this.isCurrentRun(runGeneration)) {
@@ -287,6 +365,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
       const execution = this.engine.start({
         conversation: {
           messages: this.runBaseMessages,
+          modelTarget: this.requireCurrentModelTarget(),
           modelContext: this.state.modelContext,
         },
         toolSnapshot,
@@ -367,6 +446,7 @@ export class DefaultAgentController implements PatchBridgeAgentController {
       const candidate = await this.contextManager.compact(
         {
           messages: this.state.messages,
+          modelTarget: this.requireCurrentModelTarget(),
           modelContext: this.state.modelContext,
         },
         'manual',
@@ -627,28 +707,26 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     this.dispatch({ type: 'CONVERSATION_SAVE_STARTED' });
     const messages = [...this.state.messages];
     const modelContext = this.state.modelContext;
+    const modelTarget = this.requireCurrentModelTarget();
     // 将归属会话固定在本轮局部变量中；导航可以改变全局 state，但不能改变保存目标。
     let conversation = this.state.conversation;
     try {
       if (conversation == null) {
         // 首轮对话时才创建会话，避免留下大量空会话
-        conversation = await this.conversations.create(
-          deriveTitle(firstUserText),
-        );
+        conversation = await this.conversations.create(deriveTitle(firstUserText), {
+          messages, modelTarget, modelContext,
+        });
         // 首个写请求开始前的归属检查：创建挂起期间的导航/释放/新会话操作
         // 已经作废本轮执行，此时不得再向任何目标写入内容。
         if (!this.isCurrentRun(runGeneration)) {
           return;
         }
       }
-      const saved = await this.conversations.save(conversation.conversationId, {
-        title: conversation.title,
-        revision: conversation.revision,
-        context: {
-          messages,
-          modelContext,
-        },
-      });
+      const saved = this.state.conversation == null ? conversation
+        : await this.conversations.save(conversation.conversationId, {
+          title: conversation.title, revision: conversation.revision,
+          context: { messages, modelTarget, modelContext },
+        });
       if (!this.isCurrentRun(runGeneration)) {
         return;
       }
@@ -751,6 +829,12 @@ export class DefaultAgentController implements PatchBridgeAgentController {
     ];
     return !busy.includes(this.state.status);
   }
+
+  /** 路由身份必须来自当前会话或用户显式选择，绝不猜测服务器默认值。 */
+  private requireCurrentModelTarget(): ModelTargetRef {
+    if (this.state.modelTarget == null) throw invalidStateError('尚未选择可用模型目标');
+    return this.state.modelTarget;
+  }
 }
 
 /**
@@ -770,6 +854,8 @@ export interface PatchBridgeAgentController {
   loadConversation(id: string): Promise<void>;
   /** 开始空白会话。 */
   startNewConversation(): void;
+  /** 显式切换草稿或持久化会话的目标模型。 */
+  switchModelTarget(targetId: string): Promise<void>;
   /** 删除指定会话。 */
   deleteConversation(id: string): Promise<void>;
   /** 发送一轮文本或多模态消息。 */

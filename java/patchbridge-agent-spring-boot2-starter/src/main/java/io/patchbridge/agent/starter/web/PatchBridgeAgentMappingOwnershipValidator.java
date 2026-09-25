@@ -29,6 +29,7 @@ public final class PatchBridgeAgentMappingOwnershipValidator implements SmartIni
                     ToolGatewayController.class,
                     ModelStreamController.class,
                     ContextCompactionController.class,
+                    ModelTargetController.class,
                     ConversationController.class,
                     AdminApiController.class,
                     McpAdminController.class));

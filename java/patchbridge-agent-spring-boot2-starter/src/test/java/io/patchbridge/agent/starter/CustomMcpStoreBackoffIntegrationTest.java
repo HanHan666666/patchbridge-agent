@@ -24,11 +24,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
         PatchBridgeAgentStarterIntegrationTest.TestApp.class,
         CustomMcpStoreBackoffIntegrationTest.CustomStoreConfig.class
 }, properties = {
+            "patchbridge-agent.models.targets.fake-model.base-url=http://localhost:0/v1",
+            "patchbridge-agent.models.targets.fake-model.model=fake-model",
         "spring.datasource.url=jdbc:h2:mem:custommcpstore;DB_CLOSE_DELAY=-1",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.sql.init.mode=always",
         "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
-        "patchbridge-agent.model.context-window-tokens=128000",
+        "patchbridge-agent.models.targets.fake-model.context-window-tokens=128000",
+            "patchbridge-agent.models.default-target=fake-model",
+            "patchbridge-agent.models.targets.fake-model.display-name=测试模型",
+            "patchbridge-agent.models.targets.fake-model.protocol=openai-chat-completions",
+            "patchbridge-agent.models.targets.fake-model.routing-revision=1",
+            "patchbridge-agent.models.targets.fake-model.image-input=true",
+            "patchbridge-agent.models.targets.fake-model.tool-calling=true",
         "patchbridge-agent.mcp.tool-version-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
                 "patchbridge-agent.mcp.source=jdbc"
 })

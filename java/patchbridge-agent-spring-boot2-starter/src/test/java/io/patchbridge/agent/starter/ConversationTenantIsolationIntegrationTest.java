@@ -34,13 +34,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest(
         classes = ConversationTenantIsolationIntegrationTest.TestApp.class,
         properties = {
+            "patchbridge-agent.models.default-target=fake-model",
+            "patchbridge-agent.models.targets.fake-model.display-name=测试模型",
+            "patchbridge-agent.models.targets.fake-model.protocol=openai-chat-completions",
+            "patchbridge-agent.models.targets.fake-model.routing-revision=1",
+            "patchbridge-agent.models.targets.fake-model.image-input=true",
+            "patchbridge-agent.models.targets.fake-model.tool-calling=true",
             "spring.datasource.url=jdbc:h2:mem:tenanttest;DB_CLOSE_DELAY=-1",
             "spring.datasource.driver-class-name=org.h2.Driver",
             "spring.sql.init.mode=always",
             "spring.sql.init.schema-locations=classpath:agent-schema-h2.sql",
-            "patchbridge-agent.model.base-url=http://localhost:0/v1",
-            "patchbridge-agent.model.model=fake-model",
-            "patchbridge-agent.model.context-window-tokens=128000",
+            "patchbridge-agent.models.targets.fake-model.base-url=http://localhost:0/v1",
+            "patchbridge-agent.models.targets.fake-model.model=fake-model",
+            "patchbridge-agent.models.targets.fake-model.context-window-tokens=128000",
             "patchbridge-agent.mcp.enabled=false"
         })
 @AutoConfigureMockMvc
@@ -66,7 +72,7 @@ class ConversationTenantIsolationIntegrationTest {
                 mockMvc.perform(
                                 post("/ai/conversations")
                                         .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"title\":\"租户 A 会话\"}"))
+                                        .content(PatchBridgeAgentStarterIntegrationTest.newConversationJson("租户 A 会话")))
                         .andExpect(status().isOk())
                         .andReturn()
                         .getResponse()
@@ -81,7 +87,7 @@ class ConversationTenantIsolationIntegrationTest {
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"revision\":0,\"context\":{"
+                                        "{\"revision\":0,\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
                                             + "\"messages\":[{\"id\":\"tenant-a-message\","
                                             + "\"role\":\"user\",\"blocks\":[{\"type\":\"text\",\"text\":\"租户"
                                             + " A 私有消息\"}]}],"
@@ -103,7 +109,7 @@ class ConversationTenantIsolationIntegrationTest {
                         put("/ai/conversations/" + conversationId)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
-                                        "{\"revision\":1,\"context\":{"
+                                        "{\"revision\":1,\"context\":{\"modelTarget\":{\"targetId\":\"fake-model\",\"routingRevision\":1},"
                                                 + "\"messages\":[],\"modelContext\":{"
                                                 + "\"checkpoint\":null,"
                                                 + "\"firstRetainedMessageId\":null,"

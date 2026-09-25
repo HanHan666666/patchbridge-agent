@@ -19,6 +19,8 @@ import io.patchbridge.agent.core.invocation.ModelGateway;
 import io.patchbridge.agent.core.invocation.ModelInvocationPipeline;
 import io.patchbridge.agent.core.invocation.ToolInvocationPipeline;
 import io.patchbridge.agent.core.model.ModelProvider;
+import io.patchbridge.agent.core.model.target.*;
+import io.patchbridge.agent.starter.model.*;
 import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.schema.SimpleReflectionSchemaGenerator;
 import io.patchbridge.agent.core.schema.ToolSchemaGenerator;
@@ -153,30 +155,56 @@ public class PatchBridgeAgentAutoConfiguration {
 
     // ---------- 模型网关 ----------
 
-    /**
-     * 从宿主必需的模型窗口配置派生 80% 阈值、近期保留预算与输出预留。
-     * 缺失窗口在启动期失败，不能由 Browser 或 Provider 猜测。
-     */
+    /** 默认 Chat 协议工厂；宿主可按同名 Bean 替换传输实现。 */
     @Bean
-    @ConditionalOnMissingBean(ContextCompactionSettings.class)
-    public ContextCompactionSettings contextCompactionSettings(
-            PatchBridgeAgentProperties properties) {
-        Integer contextWindowTokens = properties.getModel().getContextWindowTokens();
-        if (contextWindowTokens == null) {
-            throw new IllegalStateException(
-                    "patchbridge-agent.model.context-window-tokens 是必需配置");
-        }
-        return new ContextCompactionSettings(
-                contextWindowTokens.intValue(),
-                properties.getModel().getKeepRecentTokens(),
-                properties.getModel().getReservedOutputTokens());
+    @ConditionalOnMissingBean(name = "openAiChatProtocolAdapterFactory")
+    public ModelProtocolAdapterFactory openAiChatProtocolAdapterFactory() {
+        return new ModelProtocolAdapterFactory() {
+            /** 返回稳定协议标识。 */
+            public String protocol() { return "openai-chat-completions"; }
+            /** 每个目标独立绑定不可变连接配置。 */
+            public io.patchbridge.agent.core.model.ModelProtocolAdapter create(PatchBridgeAgentProperties.Target target) {
+                return new OpenAiCompatibleModelProvider(target);
+            }
+        };
     }
 
+    /** 默认 Messages 协议工厂，不在 Router 中增加厂商分支。 */
     @Bean
-    @ConditionalOnMissingBean(ModelProvider.class)
-    public OpenAiCompatibleModelProvider openAiCompatibleModelProvider(
-            PatchBridgeAgentProperties properties) {
-        return new OpenAiCompatibleModelProvider(properties.getModel());
+    @ConditionalOnMissingBean(name = "anthropicMessagesProtocolAdapterFactory")
+    public ModelProtocolAdapterFactory anthropicMessagesProtocolAdapterFactory() {
+        return new ModelProtocolAdapterFactory() {
+            /** 返回稳定协议标识。 */
+            public String protocol() { return "anthropic-messages"; }
+            /** 创建固定目标的 Messages HTTP Adapter。 */
+            public io.patchbridge.agent.core.model.ModelProtocolAdapter create(PatchBridgeAgentProperties.Target target) {
+                return new AnthropicMessagesModelProvider(target);
+            }
+        };
+    }
+
+    /** 默认仅使用部署配置；宿主 Catalog 整体替换时不再读取 properties 目标。 */
+    @Bean
+    @ConditionalOnMissingBean(ModelTargetCatalog.class)
+    public ModelTargetCatalog modelTargetCatalog(PatchBridgeAgentProperties properties,
+            ObjectProvider<ModelProtocolAdapterFactory> factories) {
+        List<ModelProtocolAdapterFactory> all = new ArrayList<ModelProtocolAdapterFactory>();
+        factories.orderedStream().forEach(all::add);
+        return PropertiesModelTargetCatalog.create(properties.getModels(), all);
+    }
+
+    /** 默认开放给已认证用户及显式可信 JVM；宿主按目标实施更细粒度授权。 */
+    @Bean
+    @ConditionalOnMissingBean(ModelAccessPolicy.class)
+    public ModelAccessPolicy modelAccessPolicy() {
+        return (access, target) -> access.isTrustedJvm() || access.getUser() != null;
+    }
+
+    /** Browser、摘要、Java 调用与切换预检共用的唯一目标解析。 */
+    @Bean
+    @ConditionalOnMissingBean(ModelProviderRouter.class)
+    public ModelProviderRouter modelProviderRouter(ModelTargetCatalog catalog, ModelAccessPolicy policy) {
+        return new ModelProviderRouter(catalog, policy);
     }
 
     // ---------- 存储默认实现（需要 DataSource） ----------
@@ -358,10 +386,10 @@ public class PatchBridgeAgentAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ModelInvocationPipeline.class)
     public ModelInvocationPipeline modelInvocationPipeline(
-            ModelProvider provider, ObjectProvider<ModelCallInterceptor> interceptors) {
+            ModelProviderRouter router, ObjectProvider<ModelCallInterceptor> interceptors) {
         List<ModelCallInterceptor> interceptorList = new ArrayList<ModelCallInterceptor>();
         interceptors.orderedStream().forEach(interceptorList::add);
-        return new ModelInvocationPipeline(provider, interceptorList);
+        return new ModelInvocationPipeline(router, interceptorList);
     }
 
     /**
@@ -384,10 +412,9 @@ public class PatchBridgeAgentAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ContextCompactionProvider.class)
     public ContextCompactionProvider contextCompactionProvider(
-            ModelGateway modelGateway, ModelStateProjector stateProjector,
-            ContextCompactionSettings settings) {
+            ModelGateway modelGateway, ModelProviderRouter router) {
         return new DefaultContextCompactionProvider(
-                modelGateway, stateProjector, settings);
+                modelGateway, router);
     }
 
     // ---------- Web 端点 ----------
@@ -463,13 +490,13 @@ public class PatchBridgeAgentAutoConfiguration {
             ModelInvocationPipeline invocationPipeline,
             ObjectProvider<io.patchbridge.agent.core.auth.CurrentUserProvider> userProvider,
             AuditRecorder audit,
-            PatchBridgeAgentProperties properties,
+            ModelConversationService modelConversations,
             ObjectMapper objectMapper) {
         return new ModelStreamController(
                 invocationPipeline,
                 requiredUserProvider(userProvider),
                 audit,
-                properties.getModel().getModel(),
+                modelConversations,
                 objectMapper);
     }
 
@@ -477,17 +504,31 @@ public class PatchBridgeAgentAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ContextCompactionController.class)
     public ContextCompactionController contextCompactionController(
-            ContextCompactionSettings settings,
+            ModelConversationService modelConversations,
             ContextCompactionProvider provider,
             ObjectProvider<io.patchbridge.agent.core.auth.CurrentUserProvider> userProvider,
-            AuditRecorder audit,
-            PatchBridgeAgentProperties properties) {
+            AuditRecorder audit) {
         return new ContextCompactionController(
-                settings,
+                modelConversations,
                 provider,
                 requiredUserProvider(userProvider),
-                audit,
-                properties.getModel().getModel());
+                audit);
+    }
+
+    /** 会话创建、保存和目标切换共用一致性应用服务。 */
+    @Bean
+    @ConditionalOnMissingBean(ModelConversationService.class)
+    public ModelConversationService modelConversationService(ConversationRepository repository,
+            ConversationOwnerResolver owners, ModelProviderRouter router) {
+        return new ModelConversationService(repository, owners, router);
+    }
+
+    /** 模型目录和切换入口，不增加配置管理 API。 */
+    @Bean
+    @ConditionalOnMissingBean(io.patchbridge.agent.starter.web.ModelTargetController.class)
+    public io.patchbridge.agent.starter.web.ModelTargetController modelTargetController(ModelProviderRouter router,
+            ModelConversationService conversations, ObjectProvider<io.patchbridge.agent.core.auth.CurrentUserProvider> users) {
+        return new io.patchbridge.agent.starter.web.ModelTargetController(router, conversations, requiredUserProvider(users));
     }
 
     @Bean
@@ -496,9 +537,9 @@ public class PatchBridgeAgentAutoConfiguration {
             ConversationRepository repository,
             ObjectProvider<io.patchbridge.agent.core.auth.CurrentUserProvider> userProvider,
             ConversationOwnerResolver ownerResolver,
-            PatchBridgeAgentProperties properties) {
+            PatchBridgeAgentProperties properties, ModelConversationService modelConversations) {
         return new ConversationController(
-                repository, requiredUserProvider(userProvider), ownerResolver, properties);
+                repository, requiredUserProvider(userProvider), ownerResolver, properties, modelConversations);
     }
 
     @Bean

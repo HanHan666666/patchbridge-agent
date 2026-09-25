@@ -15,6 +15,7 @@ import type {
   ConversationContext,
   ModelContext,
   ModelState,
+  ModelTargetRef,
 } from './types';
 import type {
   ContextCompactionGateway,
@@ -70,9 +71,9 @@ export interface PreparedModelContext {
 /** 浏览器模型上下文管理端口。 */
 export interface ContextManager {
   /** 读取并缓存当前服务端模型窗口配置。 */
-  loadConfiguration(signal?: AbortSignal): Promise<ContextCompactionConfiguration>;
+  loadConfiguration(target: ModelTargetRef, signal?: AbortSignal): Promise<ContextCompactionConfiguration>;
   /** 返回已经成功加载的配置；初始化前调用必须失败。 */
-  getConfiguration(): ContextCompactionConfiguration;
+  getConfiguration(target: ModelTargetRef): ContextCompactionConfiguration;
   /** 在每次模型调用前执行阈值检查，并在需要时完成自动压缩。 */
   prepareForModelCall(input: PrepareModelContextInput): Promise<PreparedModelContext>;
   /** 返回当前模型调用是否必须先自动压缩，供 Runtime 发布准确阶段。 */
@@ -99,7 +100,7 @@ export interface ContextManager {
 /** 默认 ContextManager：不持有会话，只缓存不可变服务端配置。 */
 export class DefaultContextManager implements ContextManager {
   /** 当前页面已经验证成功的窗口配置。 */
-  private configuration: ContextCompactionConfiguration | null = null;
+  private readonly configurations = new Map<string, ContextCompactionConfiguration>();
   /** 稳定业务 ID 生成器。 */
   private readonly createId: (kind: 'checkpoint' | 'message') => string;
   /** 可测试时钟。 */
@@ -119,19 +120,22 @@ export class DefaultContextManager implements ContextManager {
   }
 
   /** 首次读取服务端配置，后续调用共享同一模型配置快照。 */
-  async loadConfiguration(signal?: AbortSignal): Promise<ContextCompactionConfiguration> {
-    if (this.configuration == null) {
-      this.configuration = await this.gateway.configuration(signal);
-    }
-    return this.configuration;
+  async loadConfiguration(target: ModelTargetRef, signal?: AbortSignal): Promise<ContextCompactionConfiguration> {
+    const key = `${target.targetId}:${target.routingRevision}`;
+    const known = this.configurations.get(key);
+    if (known != null) return known;
+    const configuration = await this.gateway.configuration(target, signal);
+    this.configurations.set(key, configuration);
+    return configuration;
   }
 
   /** 返回初始化阶段取得的配置，禁止使用 Browser 默认值掩盖服务端遗漏。 */
-  getConfiguration(): ContextCompactionConfiguration {
-    if (this.configuration == null) {
+  getConfiguration(target: ModelTargetRef): ContextCompactionConfiguration {
+    const configuration = this.configurations.get(`${target.targetId}:${target.routingRevision}`);
+    if (configuration == null) {
       throw invalidStateError('上下文压缩配置尚未加载');
     }
-    return this.configuration;
+    return configuration;
   }
 
   /**
@@ -165,7 +169,7 @@ export class DefaultContextManager implements ContextManager {
       return false;
     }
     return measureCurrentTokens(conversation)
-      >= this.getConfiguration().automaticThresholdTokens;
+      >= this.getConfiguration(conversation.modelTarget).automaticThresholdTokens;
   }
 
   /**
@@ -180,8 +184,8 @@ export class DefaultContextManager implements ContextManager {
     modelMessages: readonly AgentMessage[],
     tools: readonly ModelToolDefinition[],
   ): void {
-    const configuration = this.getConfiguration();
-    const budgetTokens = this.inputBudgetTokens();
+    const configuration = this.getConfiguration(conversation.modelTarget);
+    const budgetTokens = this.inputBudgetTokens(conversation.modelTarget);
     const usage = conversation.modelContext.usage;
     const toolTokens = estimateToolDefinitions(tools);
     const estimatedTokens = usage == null
@@ -201,8 +205,8 @@ export class DefaultContextManager implements ContextManager {
   }
 
   /** 输入预算 = 窗口 − 输出预留；派生只来自服务端配置，不在此二次推导。 */
-  private inputBudgetTokens(): number {
-    const configuration = this.getConfiguration();
+  private inputBudgetTokens(target: ModelTargetRef): number {
+    const configuration = this.getConfiguration(target);
     return configuration.contextWindowTokens - configuration.reservedOutputTokens;
   }
 
@@ -221,10 +225,11 @@ export class DefaultContextManager implements ContextManager {
     const tokensBefore = measureCurrentTokens(conversation);
     const plan = createCompactionPlan(
       conversation,
-      this.getConfiguration().keepRecentTokens,
+      this.getConfiguration(conversation.modelTarget).keepRecentTokens,
     );
     const checkpointId = this.createId('checkpoint');
     const request: ContextCompactionRequest = Object.freeze({
+      modelTarget: conversation.modelTarget,
       trigger,
       messagesToSummarize: plan.messagesToSummarize,
       retainedMessages: plan.retainedMessages,
@@ -246,12 +251,12 @@ export class DefaultContextManager implements ContextManager {
     // 压缩成功不等于结果可用：保留段超过近期预算（如过大的最新安全段）时，
     // 压缩后的工作上下文仍可能装不下窗口。此时必须拒绝该检查点，
     // 调用方继续持有原模型上下文，完整历史不受影响。
-    if (estimatedTokensAfter > this.inputBudgetTokens()) {
+    if (estimatedTokensAfter > this.inputBudgetTokens(conversation.modelTarget)) {
       throw contextWindowExceededError({
         estimatedTokens: estimatedTokensAfter,
-        budgetTokens: this.inputBudgetTokens(),
-        contextWindowTokens: this.getConfiguration().contextWindowTokens,
-        reservedOutputTokens: this.getConfiguration().reservedOutputTokens,
+        budgetTokens: this.inputBudgetTokens(conversation.modelTarget),
+        contextWindowTokens: this.getConfiguration(conversation.modelTarget).contextWindowTokens,
+        reservedOutputTokens: this.getConfiguration(conversation.modelTarget).reservedOutputTokens,
         detail: '压缩后的工作上下文仍超过模型窗口预算（近期消息过大或摘要过长）',
       });
     }
@@ -276,6 +281,7 @@ export class DefaultContextManager implements ContextManager {
     });
     return Object.freeze({
       messages: conversation.messages,
+      modelTarget: conversation.modelTarget,
       modelContext,
     });
   }
@@ -318,6 +324,7 @@ export class DefaultContextManager implements ContextManager {
     }
     return Object.freeze({
       messages: conversation.messages,
+      modelTarget: conversation.modelTarget,
       modelContext: Object.freeze({
         ...conversation.modelContext,
         modelState: snapshotModelState(modelState),
@@ -334,7 +341,7 @@ export class DefaultContextManager implements ContextManager {
 
 /** 由 reducer 与 View 共享的纯状态投影，不发起压缩副作用。 */
 export function inspectContextWindow(
-  conversation: ConversationContext,
+  conversation: Pick<ConversationContext, 'messages' | 'modelContext'>,
   configuration: ContextCompactionConfiguration | null,
 ): ContextWindowState {
   const usage = conversation.modelContext.usage;
@@ -351,7 +358,7 @@ export function inspectContextWindow(
 }
 
 /** 当前 Provider 基线加上基线之后新消息的保守估算。 */
-function measureCurrentTokens(conversation: ConversationContext): number {
+function measureCurrentTokens(conversation: Pick<ConversationContext, 'messages' | 'modelContext'>): number {
   const usage = conversation.modelContext.usage;
   if (usage == null) {
     throw invalidStateError('尚未取得模型 Provider token usage，不能执行上下文压缩');
@@ -419,7 +426,7 @@ function estimateToolDefinitions(tools: readonly ModelToolDefinition[]): number 
 
 /** 按“非 tool 起始消息 + 连续 tool 结果”分段，确保 Tool Call/Result 不被切开。 */
 function createCompactionPlan(
-  conversation: ConversationContext,
+  conversation: Pick<ConversationContext, 'messages' | 'modelContext'>,
   keepRecentTokens: number,
 ): CompactionPlan {
   const active = activeRealMessages(conversation);
@@ -474,7 +481,7 @@ function createCompactionPlan(
 
 /** 检查是否存在计划；只吞掉“无安全前缀”这一纯展示判断，不参与实际压缩。 */
 function canCreateCompactionPlan(
-  conversation: ConversationContext,
+  conversation: Pick<ConversationContext, 'messages' | 'modelContext'>,
   keepRecentTokens: number,
 ): boolean {
   try {
@@ -486,7 +493,7 @@ function canCreateCompactionPlan(
 }
 
 /** 返回当前检查点之后的真实工作消息，排除完整历史中已被摘要覆盖的前缀。 */
-function activeRealMessages(conversation: ConversationContext): readonly AgentMessage[] {
+function activeRealMessages(conversation: Pick<ConversationContext, 'messages' | 'modelContext'>): readonly AgentMessage[] {
   if (conversation.modelContext.checkpoint == null) {
     return conversation.messages;
   }

@@ -12,12 +12,13 @@ import java.util.List;
 public interface ConversationRepository {
 
     /**
-     * 在指定归属主体下新建空会话，revision = 0。
+     * 在指定归属主体下原子创建完整上下文，revision = 0。
      *
      * @param ownerKey 非空的不透明会话归属键
+     * @param context 已稳定的完整消息、目标与模型上下文
      * @param title 可选会话标题
      */
-    Conversation create(String ownerKey, String title);
+    Conversation create(String ownerKey, String title, ConversationContext context);
 
     /**
      * 按归属键查询单个一致性会话快照；不存在或不属于该归属返回 null。

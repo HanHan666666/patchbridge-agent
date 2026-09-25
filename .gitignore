@@ -1,5 +1,6 @@
 # --- Java ---
 target/
+!java/patchbridge-agent-core/src/main/java/io/patchbridge/agent/core/model/target/
 *.class
 *.jar
 !.mvn/wrapper/maven-wrapper.jar

@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.invocation;
 
+import io.patchbridge.agent.core.model.ModelTestTargets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -65,7 +66,7 @@ class ModelInvocationPipelineCancellationTest {
                 afterCalls.incrementAndGet();
             }
         };
-        ModelInvocationPipeline pipeline = new ModelInvocationPipeline(provider, Collections.singletonList(counting));
+        ModelInvocationPipeline pipeline = new ModelInvocationPipeline(ModelTestTargets.router(provider), Collections.singletonList(counting));
         ModelStreamListener delegate = new ModelStreamListener() {
             @Override
             public void onEvent(ModelStreamEvent event) {
@@ -144,7 +145,7 @@ class ModelInvocationPipelineCancellationTest {
                 afterCalls.incrementAndGet();
             }
         };
-        ModelInvocationPipeline pipeline = new ModelInvocationPipeline(provider, Collections.singletonList(counting));
+        ModelInvocationPipeline pipeline = new ModelInvocationPipeline(ModelTestTargets.router(provider), Collections.singletonList(counting));
         ModelStreamListener delegate = new ModelStreamListener() {
             @Override
             public void onEvent(ModelStreamEvent event) {
@@ -175,7 +176,7 @@ class ModelInvocationPipelineCancellationTest {
 
     /** 创建不含业务数据的最小模型请求。 */
     private static ModelRequest modelRequest() {
-        return new ModelRequest("response-1", "model", Collections.emptyList(), Collections.emptyList(),
+        return new ModelRequest("response-1", ModelTestTargets.REF, Collections.emptyList(), Collections.emptyList(),
                 null, null, null);
     }
 

@@ -1,5 +1,7 @@
 package io.patchbridge.agent.storage.jdbc;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,6 +49,8 @@ import java.util.Map;
  * payload 兼容行为。
  */
 class JdbcConversationRepositoryTest {
+    /** 本模块验证目标身份与完整上下文同事务保存。 */
+    private static final ModelTargetRef REF = new ModelTargetRef("jdbc-model", 1);
 
     /** 被测仓储。 */
     private JdbcConversationRepository repository;
@@ -72,7 +76,7 @@ class JdbcConversationRepositoryTest {
     void createFindAndOwnership() {
         String tenantAOwner = "tenant-a:user-1";
         String tenantBOwner = "tenant-b:user-1";
-        Conversation created = repository.create(tenantAOwner, "设备对话");
+        Conversation created = repository.create(tenantAOwner, "设备对话", emptyContext());
 
         assertEquals(0, created.getRevision());
         assertEquals(tenantAOwner, created.getOwnerKey());
@@ -91,7 +95,7 @@ class JdbcConversationRepositoryTest {
     /** 所有第一版 Block 与嵌套 ModelState 均按稳定协议完整往返。 */
     @Test
     void savesAndRestoresCompleteConversationContext() throws Exception {
-        Conversation created = repository.create("u1", null);
+        Conversation created = repository.create("u1", null, emptyContext());
         ConversationContext expected = completeContext("state-1");
 
         Conversation saved =
@@ -109,7 +113,7 @@ class JdbcConversationRepositoryTest {
     /** 未知执行事实与目录基线必须经过真实 JDBC JSON 存储一起恢复。 */
     @Test
     void persistsUnknownExecutionAndToolBudgetBaseline() throws Exception {
-        Conversation created = repository.create("u1", "未知执行");
+        Conversation created = repository.create("u1", "未知执行", emptyContext());
         ConversationContext original = new ConversationContext(Arrays.asList(
                 new AgentMessage("assistant", MessageRole.ASSISTANT,
                         Collections.<ContentBlock>singletonList(new ToolCallBlock(
@@ -119,7 +123,7 @@ class JdbcConversationRepositoryTest {
                                 "call", "local.action", ToolResultStatus.ERROR,
                                 ToolResultBlock.Execution.UNKNOWN,
                                 Collections.singletonList(new TextBlock("中止记录")))))),
-                new ModelContext(null, null, null, new ModelContextUsage(
+                REF, new ModelContext(null, null, null, new ModelContextUsage(
                         120, ModelContextUsage.Source.PROVIDER, "assistant", 70)));
         repository.save("u1", created.getConversationId(), 0, null, original);
         ConversationContext restored = repository.findSnapshot("u1", created.getConversationId()).getContext();
@@ -132,13 +136,13 @@ class JdbcConversationRepositoryTest {
     /** 第二次保存全量替换消息，并且显式空 ModelContext 会清除旧工作状态。 */
     @Test
     void replacesMessagesAndClearsModelContext() throws Exception {
-        Conversation created = repository.create("u1", null);
+        Conversation created = repository.create("u1", null, emptyContext());
         repository.save("u1", created.getConversationId(), 0, null, completeContext("state-1"));
         ConversationContext replacement =
                 new ConversationContext(
                         Collections.singletonList(
                                 textMessage("replacement", MessageRole.USER, "继续")),
-                        ModelContext.empty());
+                        REF, ModelContext.empty());
 
         repository.save("u1", created.getConversationId(), 1, null, replacement);
         ConversationSnapshot loaded = repository.findSnapshot("u1", created.getConversationId());
@@ -160,7 +164,7 @@ class JdbcConversationRepositoryTest {
     /** 过期 revision 既不能覆盖消息，也不能覆盖或清除模型状态。 */
     @Test
     void staleRevisionPreservesWholeContext() throws Exception {
-        Conversation created = repository.create("u1", null);
+        Conversation created = repository.create("u1", null, emptyContext());
         ConversationContext current = completeContext("current-state");
         repository.save("u1", created.getConversationId(), 0, null, current);
 
@@ -177,7 +181,7 @@ class JdbcConversationRepositoryTest {
                                                 Collections.singletonList(
                                                         textMessage(
                                                                 "stale", MessageRole.USER, "过期")),
-                                                ModelContext.empty())));
+                                                REF, ModelContext.empty())));
 
         assertEquals(1, conflict.getCurrentRevision());
         ConversationSnapshot loaded = repository.findSnapshot("u1", created.getConversationId());
@@ -189,7 +193,7 @@ class JdbcConversationRepositoryTest {
     /** 其他 ownerKey 不能保存或删除目标会话的 Context。 */
     @Test
     void saveAndDeleteRemainTenantIsolated() throws Exception {
-        Conversation created = repository.create("tenant-a:user-1", "a");
+        Conversation created = repository.create("tenant-a:user-1", "a", emptyContext());
         ConversationContext context = completeContext("tenant-secret-state");
         repository.save("tenant-a:user-1", created.getConversationId(), 0, null, context);
 
@@ -210,8 +214,8 @@ class JdbcConversationRepositoryTest {
     /** 会话列表按更新时间排序，归属内删除保持幂等。 */
     @Test
     void listOrderedByUpdatedDescAndDeleteIsIdempotent() throws Exception {
-        Conversation first = repository.create("u1", "a");
-        Conversation second = repository.create("u1", "b");
+        Conversation first = repository.create("u1", "a", emptyContext());
+        Conversation second = repository.create("u1", "b", emptyContext());
         repository.save(
                 "u1",
                 first.getConversationId(),
@@ -219,7 +223,7 @@ class JdbcConversationRepositoryTest {
                 null,
                 new ConversationContext(
                         Collections.singletonList(textMessage("m-1", MessageRole.USER, "更新")),
-                        ModelContext.empty()));
+                        REF, ModelContext.empty()));
 
         List<Conversation> list = repository.listByOwner("u1", 10);
         assertEquals(2, list.size());
@@ -239,7 +243,7 @@ class JdbcConversationRepositoryTest {
     /** 持久化 Block JSON 损坏时必须报错，不能用空消息伪造会话历史。 */
     @Test
     void corruptedBlocksFailExplicitly() throws Exception {
-        Conversation created = repository.create("u1", null);
+        Conversation created = repository.create("u1", null, emptyContext());
         repository.save(
                 "u1",
                 created.getConversationId(),
@@ -247,7 +251,7 @@ class JdbcConversationRepositoryTest {
                 null,
                 new ConversationContext(
                         Collections.singletonList(textMessage("m-broken", MessageRole.USER, "正常")),
-                        ModelContext.empty()));
+                        REF, ModelContext.empty()));
         jdbc.update(
                 "UPDATE agent_message SET blocks_json = ? WHERE conversation_id = ?",
                 "{not-json",
@@ -261,7 +265,7 @@ class JdbcConversationRepositoryTest {
     /** 持久化 ModelContext 结构损坏时必须报错，不能静默丢弃后继续调用模型。 */
     @Test
     void corruptedModelStateFailsExplicitly() throws Exception {
-        Conversation created = repository.create("u1", null);
+        Conversation created = repository.create("u1", null, emptyContext());
         repository.save("u1", created.getConversationId(), 0, null, completeContext("state"));
         jdbc.update(
                 "UPDATE agent_conversation SET model_context_json = ? " + "WHERE conversation_id = ?",
@@ -317,6 +321,7 @@ class JdbcConversationRepositoryTest {
         stateData.put("nested", nested);
         return new ConversationContext(
                 messages,
+                REF,
                 new ModelContext(
                         null,
                         null,
@@ -325,6 +330,11 @@ class JdbcConversationRepositoryTest {
                                 120,
                                 ModelContextUsage.Source.PROVIDER,
                                 "assistant-2", 0)));
+    }
+
+    /** 空会话仍明确保存目标身份，供后续 revision 测试使用。 */
+    private static ConversationContext emptyContext() {
+        return new ConversationContext(Collections.<AgentMessage>emptyList(), REF, ModelContext.empty());
     }
 
     /** 构造单文本块稳定消息。 */

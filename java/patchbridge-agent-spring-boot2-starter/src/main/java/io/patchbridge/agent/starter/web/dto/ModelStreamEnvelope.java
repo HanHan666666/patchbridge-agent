@@ -2,6 +2,7 @@ package io.patchbridge.agent.starter.web.dto;
 
 import io.patchbridge.agent.core.conversation.ConversationContextValues;
 import io.patchbridge.agent.core.model.ModelRequest;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import io.patchbridge.agent.core.model.ModelToolDefinition;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 
@@ -34,8 +35,8 @@ public class ModelStreamEnvelope {
         /** 本次 assistant 稳定消息 ID，供 ModelState 关联。 */
         private String responseMessageId;
 
-        /** 可选模型覆盖名。 */
-        private String model;
+        /** 精确目标引用，不接受上游模型名称。 */
+        private Map<String, Object> modelTarget;
 
         /** 历史领域消息的 JSON 值；具体块结构由 Core 唯一映射器校验。 */
         private List<Map<String, Object>> messages;
@@ -62,9 +63,6 @@ public class ModelStreamEnvelope {
         public ModelRequest toModelRequest() {
             rejectUnknownFields(unknownFields, "request");
             requireText(responseMessageId, "模型请求缺少 responseMessageId");
-            if (model != null && model.trim().isEmpty()) {
-                throw new IllegalArgumentException("request.model 不允许空白字符串");
-            }
             if (messages == null || messages.isEmpty()) {
                 throw new IllegalArgumentException("模型请求缺少 messages");
             }
@@ -87,7 +85,7 @@ public class ModelStreamEnvelope {
             }
             return new ModelRequest(
                     responseMessageId,
-                    model,
+                    ModelTargetRef.fromValue(modelTarget),
                     ConversationContextValues.fromMessagesValue(messages),
                     mappedTools,
                     ConversationContextValues.fromModelStateValue(modelState),
@@ -105,15 +103,10 @@ public class ModelStreamEnvelope {
             this.responseMessageId = value;
         }
 
-        /** 返回可选模型名。 */
-        public String getModel() {
-            return model;
-        }
-
-        /** 设置可选模型名。 */
-        public void setModel(String value) {
-            this.model = value;
-        }
+        /** 返回精确目标 JSON。 */
+        public Map<String, Object> getModelTarget() { return modelTarget; }
+        /** 绑定公开目标引用。 */
+        public void setModelTarget(Map<String, Object> value) { modelTarget = value; }
 
         /** 返回消息 JSON 值。 */
         public List<Map<String, Object>> getMessages() {
@@ -188,7 +181,7 @@ public class ModelStreamEnvelope {
         private final Map<String, Object> unknownFields = new LinkedHashMap<String, Object>();
 
         /** 校验并映射工具定义。 */
-        private ModelToolDefinition toDomain(String path) {
+        public ModelToolDefinition toDomain(String path) {
             rejectUnknownFields(unknownFields, path);
             requireText(name, path + ".name 不可为空");
             if (description == null) {

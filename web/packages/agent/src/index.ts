@@ -65,6 +65,8 @@ export type {
   ConversationSaveBody,
 } from './clients/conversationClient';
 export { HttpConversationClient } from './clients/conversationClient';
+export { HttpModelTargetClient } from './clients/modelTargetClient';
+export type { ModelTargetClient, ModelTargetCatalog } from './clients/modelTargetClient';
 export type { HttpTransport } from './clients/http';
 export { FetchHttpTransport, defaultHttpTransport } from './clients/http';
 export { SseParser } from './clients/sse';

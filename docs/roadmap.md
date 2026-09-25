@@ -1,8 +1,8 @@
 # 路线图与当前进度
 
 - 文档状态：项目进度的唯一可信来源（Single Source of Truth）
-- 最近更新：2026-09-06
-- 当前里程碑：VA-01～VA-05 已完成修复；2026-09-06 复审补齐未核实事实持久化、消息订阅内取消、目录增长预算与 MCP 版本密钥四项缺口，Java 8 与 Web 组合回归通过；R1.8“可管理模型目标、按会话路由与显式切换”和 ADR-005 仍为 Proposed、待确认且未实施，管理面与新协议验证的依赖顺序需结合审查建议评审；R2/R3 保持暂缓；R0 rc.2 候选 `f4c7be4` 的历史预检和 tag `v0.1.0-rc.2` 保留
+- 最近更新：2026-09-25
+- 当前里程碑：R1.8 最小部署模型目录、统一 Router、按会话目标与显式 handoff 已实施并通过 Java 8/Web 本地回归；R2 Anthropic Messages 协议内核与 Demo 的两种 DeepSeek Flash 真实 SSE 调用已完成。完整模型 Admin/JDBC 管理、真实宿主接入及更宽协议场景仍未验收，保持未完成；R3 暂缓。R0 rc.2 候选和 tag 保留为历史记录。
 - 当前发布状态：Pre-release 源码候选；尚未发布 Maven Central 或 npm 公共包
 
 本文只回答三个问题：**已经实现了什么、接下来做什么、哪些事情当前不做**。
@@ -35,7 +35,7 @@
 
 | 范围 | 当前估算 | 说明 |
 | --- | --- | --- |
-| 近期确认的能力组合 | 已有主干，审查补项已修复 | WebMCP、Inspector、前端 Tool、Global MCP、Call Trace 与 Java 单次模型调用已有实现；R1.5/R1.7 的 VA-01～VA-05 缺口已修复并补齐回归；R1.8 仍为 Proposed |
+| 近期确认的能力组合 | 已有主干，R1.8 最小阶段实施中 | WebMCP、Inspector、前端 Tool、Global MCP、Call Trace 与 Java 单次模型调用已有实现；R1.5/R1.7 的 VA-01～VA-05 缺口已修复并补齐回归；R1.8 部署目录、路由与切换已实现，真实 Browser/宿主及协议矩阵仍待验收 |
 | v0.1 核心功能 | 部分完成，当前缺口已修复 | 保留既有核心链路与历史验收；2026-09-05 登记的五项问题已完成修复、测试与契约同步，不能以整体 100% 代表真实宿主与跨协议验证状态 |
 | v0.1 源码开源准备 | 100%（仅 rc.2 历史候选） | Java/Web/Bundle/归档/安全扫描与真实模型预检已完成并绑定 rc.2；不代表当前源码的新问题已关闭 |
 | 原始长期愿景 | 原规划约 70%，本轮未重估 | 模型厂商扩展、既有 API 自动适配、公共包发布和部分生态能力尚未实现；真实宿主接入与跨协议验证仍需提供证据 |
@@ -113,7 +113,7 @@ Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Too
 | 状态 | 能力 | 当前实现边界 |
 | --- | --- | --- |
 | ✅ | MIT License | 根目录已经包含 MIT `LICENSE` |
-| ✅ | CI | Java 8 测试、Web 测试/构建和 Starter 内置前端产物一致性均进入 GitHub Actions |
+| 🟡 | CI | 已补入仓库工作流：Java 8、Web 测试/构建和 Starter Bundle 与提交版本一致性；首次远程运行待验收 |
 | ✅ | 使用与设计文档 | README、QUICKSTART、文档中心、Guide/Reference、架构文档和 Runtime ADR 已建立入口 |
 | ✅ | v0.1 源码发布收口 | 二次审计 Q-02～Q-10 整改完成；rc.2 候选 `f4c7be4` 全量预检通过（FINAL-01 满足，Global MCP 真实 endpoint 链路为集成人明示接受的记录偏差）并冻结 tag `v0.1.0-rc.2`；预检记录见[《v0.1 源码发布候选预检》](releases/v0.1/evidence/rc2-preflight.md) |
 | ✅ | 开源文档信息架构 | R1.6 已完成：中文文档门户、ASCII `kebab-case` 路径、Guide / Reference / Architecture / Research / Release / Archive / Contributing 分层、旧汇总文档拆分删除、长期文档贡献规范和全量链接验收均已完成 |
@@ -124,9 +124,9 @@ Browser Runtime、Java Ports、Provider 边界、持久化上下文和统一 Too
 | 状态 | 方向 | 已有基础 | 明确缺口 |
 | --- | --- | --- | --- |
 | 🟡 | 既有 API 低侵入转 Tool | 纯前端 Tool 可直接复用已有 HTTP API；Core 预留 `OPENAPI` source | 后端 `@AiExpose`、OpenAPI/springdoc 显式 allowlist 转换尚未实现 |
-| ⏳ | 模型目标管理与会话切换 | Model Port、ContentBlock、ModelState、ConversationContext、上下文压缩与 Admin/JDBC 配置模式已完成 | R1.8 设计与 ADR-005 为 Proposed；ModelTarget Store/Catalog/Router、会话 target、handoff、Admin/Widget/Demo 均未实现 |
-| 🟡 | 多模型厂商 | Provider 协议边界和 OpenAI-compatible Chat 已完成；R1.8 规划统一 Router | 当前没有 Target Router；Anthropic 与 Responses Adapter 尚未实现，不能声称任意 API 已接入 |
-| 🟡 | Admin Console | MCP 管理、Audit/Trace 查看可用 | 模型 Target 管理属于 R1.8 待实现；仍不是完整运营平台 |
+| 🟡 | 部署模型目录与会话切换 | YAML 多目标目录、统一 Router、会话 target、显式 handoff、默认 Widget 与 Demo 配置已实现 | 真实宿主未选定；完整模型 Admin/JDBC 管理暂缓，不计入本阶段完成 |
+| 🟡 | 多模型协议 | OpenAI Chat 与 Anthropic Messages 已接同一 Router；DeepSeek Flash 两种接口完成直接认证和最小流验证 | 完整 Browser→Starter→DeepSeek、工具/图片交错与长期恢复仍需验收；Responses 暂缓 |
+| 🟡 | Admin Console | MCP 管理、Audit/Trace 查看可用 | 模型 Target 在线管理另行决定；当前目录由部署配置维护 |
 | 🟡 | 可观测性 | Audit、traceId/requestId/toolCallId 与 Hook 已具备 | 尚未提供 OpenTelemetry Adapter |
 | 🟡 | Tool Policy | 权限、HITL、Interceptor 和默认不重试已具备 | 没有内置 Rate Limit Policy；应通过显式 Adapter/Interceptor 扩展 |
 | 🟡 | MCP 生态 | 外部 MCP Tools 导入与 Global 管理已完成 | 尚未把 `@AiTool` 导出为 MCP Server，也没有 Resources/Prompts 等能力 |
@@ -189,9 +189,7 @@ Web 五包 **260 tests**（Agent 210、WebMCP 6、Widget 21、Inspector 2、Call
 需备份后由宿主按真实事实与原目录显式迁移。无数据库列变更，不自动将未知历史标为完成。
 配置、HTTP/Runtime 契约、压缩/Global MCP 指南、架构/ADR、README/Quickstart 与 Demo 已同步。
 
-后续顺序建议：先补齐五项边界，再验证真实存量宿主接入成本，并尽早用最小目标解析与第二种
-真实协议验证 Provider 抽象；模型 Admin/JDBC 管理根据明确需求推进。这是本次登记的评审
-建议，尚未重排或重新编号 R1.8/R2/R3/R5，也未批准新的配置来源和恢复策略。
+后续顺序已由维护者确认：五项边界修复后，先实施最小目标解析和第二种真实协议；真实宿主接入项目尚未选定，模型 Admin/JDBC 管理根据明确需求另行决策。
 
 ### R0 — v0.1 源码开源收口（已完成，rc.2 已冻结）
 
@@ -284,7 +282,7 @@ Conversation/Audit/HTTP 映射污染；OkHttp 与 WebFlux 均通过 Provider →
 
 详细方案见[《Java 后端单次模型调用 API 设计》](architecture/designs/java-model-gateway.md)。
 
-### R1.5 — Browser Agent Runtime 生产级加固（已有实现，审查补项待修复）
+### R1.5 — Browser Agent Runtime 生产级加固（已完成，含审查补项）
 
 2026-08-24 的初次验收记录保留如下。2026-09-05 新确认的 VA-03“取消后继续”与
 VA-04“Java Tool 未知异常分类”缺口已修复并补齐回归，状态见本页审查补项表。
@@ -360,7 +358,7 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 `AGENTS.md`、README、QUICKSTART、包 README、发布检查清单中的旧路径引用已同步；
 `docs/` 路径已全部 ASCII 化，Markdown 本地链接检查与旧路径扫描无残留。
 
-### R1.7 — 上下文压缩（已有实现，预算补项待修复）
+### R1.7 — 上下文压缩（已完成，含预算补项）
 
 2026-08-27 的功能实施与后续回归记录保留如下。2026-09-05 新确认的 VA-05“压缩后窗口
 检查”与 VA-02 影响的 ConversationContext 端到端保存均已修复并补齐回归，状态见本页
@@ -406,84 +404,33 @@ Release/审计/证据、Archive 与 Contributing 规范均已落地；“用户�
 设计原因见[ADR-004](architecture/adr/0004-context-compaction.md)，接入步骤见
 [《使用上下文压缩》](guides/context-compaction.md)。
 
-### R1.8 — 可管理模型目标、按会话路由与显式切换（Proposed，待确认、未实施）
+### R1.8 — 部署模型目录、按会话路由与显式切换（实施中）
 
-目标：把当前单份 `patchbridge-agent.model.*` 和单一 `ModelProvider` 装配替换为服务端可管理的
-`ModelTarget` 目录、统一 Router 和按会话 current Target；多个 OpenAI-compatible Target 先
-共享同一协议 Adapter，并为 R2/R3 新 Provider 建立不需要修改 Browser Agent Loop 的接入边界。
+目标：让一个部署中的多个模型目标通过同一 Catalog/Router 服务 Browser 模型流、上下文压缩和 Java Gateway。维护者已确认 `application.yml` 为默认唯一配置来源，凭据从环境注入；宿主可整体替换 Catalog。完整模型 Admin/JDBC 管理后台暂缓，是否需要及其配置生命周期另行决定。
 
-方案状态：技术设计和 ADR-005 已完成初稿，但配置归属、旧配置迁移和跨 Provider 不兼容内容的
-处置策略仍需维护者确认。没有生产代码、公共端点、Guide/Reference 或 Demo 行为改变，不能把
-本里程碑描述为部分可用。
+当前已实现范围：
 
-2026-09-05 审查追加评审点：保留统一 ModelTarget/Router 的职责动机，重新评估完整
-Admin/JDBC 管理是否必须先于第二种真实协议验证；单一事实源不自动等于框架自带 JDBC。
-该建议尚未修改下列 Proposed 方案，也不代表批准多源合并、兼容或降级路径。
+- [x] `ModelTargetRef { targetId, routingRevision }`、不可变目录、访问策略、协议工厂和统一 Router；明确拒绝缺失、禁用、无权限、过期修订及未注册协议，不自动切到默认目标。
+- [x] 删除单模型 `patchbridge-agent.model.*` 路径；部署配置声明多目标、默认目标、能力、窗口、超时和服务端凭据。目标配置改变时维护者显式推进 `routingRevision`。
+- [x] `ConversationContext` 原子持久化 `messages + modelTarget + modelContext`；首轮完整 Context 创建、普通保存禁止换目标；模型流与压缩核对会话当前引用。
+- [x] 草稿与已保存会话的显式 handoff；保留完整历史和文本检查点，清除私有状态并按新窗口重估。已保存会话使用 owner/revision 原子提交。
+- [x] Browser Headless/默认 Widget 提供目录、当前目标和空闲切换；Demo 以 DeepSeek Flash 配置 OpenAI Chat 与 Anthropic Messages 两个目标。
+- [x] 本地 Corretto 8 全 Reactor 276 tests、Web 五包 262 tests 全部通过，五包构建及四份 Starter Bundle 与源码产物逐字节一致；Demo 登录后经 Starter 的两个真实 DeepSeek SSE 调用均收到 `message-stop`，保存会话 handoff 后重新读取保留历史与新目标；Anthropic 工具名别名满足 64 字符上限，真实工具调用恢复原名 `local.weather` 并以 `tool-use` 结束；联调密钥未写入受版本控制文件。
 
-计划范围：
+尚未关闭的验收：
 
-- [ ] 增加 `ModelTarget`、`ModelTargetRef { targetId, routingRevision }`、能力模型、record
-  revision、区分已认证 HTTP 与可信 JVM 的 `ModelAccessContext` 及 `ModelAccessPolicy`；
-- [ ] 增加 JDBC `ModelTargetStore`、AES-GCM 凭据、Admin 乐观锁、default 事务不变量和多实例
-  generation；Target 使用 record/routing 双 revision，default settings 使用独立
-  settingsRevision；配置源只保留一个，不合并、不 fallback；
-- [ ] 增加按 protocol 注册的 `ModelProtocolAdapter`、`ModelTargetCatalog` 与
-  `ModelProviderRouter`，让 Browser Model Stream、Context Compaction 和 Java
-  `ModelGateway` 共享同一目标解析；
-- [ ] 删除 `ModelRequest.model` 与 `patchbridge-agent.model.*` 单模型配置路径，不保留导入、
-  别名、双读或 JDBC 空库 fallback；
-- [ ] 将 `ConversationContext` 一次性替换为完整 `messages + modelTarget + modelContext`，使用
-  同一个 owner/revision/事务保存；
-- [ ] 实现统一 Model Handoff：完整消息和文本 checkpoint 保持不变，旧 `ModelState` 清空，按
-  ADR-004 同一 UTF-8 上界为新 Target 生成 estimated usage；目标无法原样编码当前工作上下文或
-  估算超过目标窗口时明确失败；
-- [ ] 区分多个 enabled、一个 default 和每个会话一个 current；Target 停用、修订变化或无权限
-  时不自动换 default；
-- [ ] 首轮稳定终态把 TargetRef、完整消息和 ModelContext 一次创建；普通保存不能改变 current
-  Target，取消或失败草稿不创建空 Server 会话；
-- [ ] Admin Console 增加模型 CRUD、只写凭据、disabled Target 真实测试、启停和 default；测试
-  结果不落库且不能绕过普通 Router；默认 Widget 与 Headless API 增加目录、当前模型和空闲切换；
-- [ ] Demo 使用至少两个真实 OpenAI-compatible Target 验证同协议切换；跨协议真实切换分别在
-  R2/R3 Adapter 完成后验收，不用模型名称冒充协议兼容。
+- [ ] 浏览器页面的真实交互、摘要及工具调用全链路联调；真实宿主接入项目尚未选定。
+- [ ] 两协议的图片、工具交错、取消、错误、重启后续接以及不兼容历史矩阵形成可重复验证；当前最小真实流不能代表全场景。
+- [ ] 真实浏览器交互与前述关键场景完成验证后才能将此最小阶段标为 ✅；文档链接、Demo 使用说明、五包构建和四份 Starter Bundle 一致性本地已复核。完整模型后台不是该最小阶段的验收条件。
 
-验收条件：
+决策理由与边界见[ADR-005](architecture/adr/0005-model-target-routing-and-switching.md)。2026-08-29 的[完整后台设计稿](architecture/designs/model-target-registry-and-switching.md)作为历史候选保留，不代表当前实施方案。
 
-- 普通 Browser 或 Java 调用无法用任意模型名绕过 Target 目录；目录、Router、压缩和会话保存
-  使用同一 TargetRef；
-- Model Stream、Compaction 和 Java Gateway 的 missing/disabled/forbidden/revision mismatch/
-  未注册协议都明确失败且调用其他 Provider 次数为零；
-- 可信 JVM 调用与已认证 HTTP 具有明确 AccessContext；匿名 HTTP 不能借无用户 Java 入口放行；
-- 配置凭据只以密文存储并且不进入响应、日志、错误与审计；KEEP/REPLACE/CLEAR、配置冲突、
-  generation 和多实例刷新均有测试；
-- 会话 handoff 在 expectedRevision 下原子提交，成功前后完整 messages 逐值相同；失败、取消或
-  冲突保持旧 Target、ModelState 和 usage；
-- disabled Target 的 Admin 测试不改变 enabled/default、不持久化结果；Catalog 故障时仍能通过
-  record revision 修复配置，但不能沿用旧 generation 路由；
-- image/Tool 历史能力矩阵有契约测试，任何不兼容都不使用占位、删除、文本降级或合成 Tool
-  Result；展示 ReasoningBlock 保留且不转正文，旧 Provider reasoning 状态随 handoff 清除；
-- 进行中的 AgentExecution 冻结一个 TargetRef，busy 状态拒绝切换；管理修订在下一次调用明确
-  失败，不在 Server 保存跨请求 Execution；
-- Admin、Widget、Headless、真实 Demo、Java/Web 全量测试、Bundle 字节一致和全部相关文档同时
-  完成后，才能标记为 ✅。
+### R2 — Anthropic Messages 协议与独立状态重置（部分实施）
 
-详细方案见[《可管理模型目标、按会话路由与显式切换技术方案》](architecture/designs/model-target-registry-and-switching.md)，
-拟议决策见[ADR-005](architecture/adr/0005-model-target-routing-and-switching.md)。
-
-### R2 — Anthropic Provider 与独立会话连续状态重置（暂缓，依赖 R1.8）
-
-- [ ] 实现 Anthropic Messages 请求/流式事件 Adapter；
-- [ ] 作为 `anthropic-messages` 协议 Adapter 接入 R1.8 的统一 Target Catalog/Router，不新增
-  第二套 Provider 选择或配置入口；
-- [ ] 使用独立 `ModelState.format` 保留带签名 thinking block；
-- [ ] 固化 Provider 拥有的 ModelState 完整替换语义：`message-stop` 返回非空下一状态时
-  替换旧值，返回 `null` 时清空；Runtime 不推测生命周期，公共 `ModelState`
-  不增加 `scope`（见[ADR-002](architecture/adr/0002-model-state-lifecycle.md)）；
-- [ ] 实现显式会话连续状态重置：在 owner 隔离和 `expectedRevision` 下原子保留消息、
-  清空 `modelState`、推进 revision 并返回完整快照；普通续跑的 format 不匹配或过期
-  仍明确失败，不自动无状态重试（见[ADR-002](architecture/adr/0002-model-state-lifecycle.md)）；
-- [ ] 验证工具交错调用、取消、错误映射和会话恢复；
-- [ ] 在 R1.8 已有选择器中增加真实 Anthropic Target，验证 OpenAI-compatible ↔ Anthropic
-  handoff；文档中心、对应 Guide/Reference 和 Demo 同步说明显式状态重置的用法、不可恢复代价与冲突处理。
+- [x] `anthropic-messages` Adapter 接入相同 Catalog/Router，映射请求、流式事件、工具别名、usage 与独立 `ModelState.format`；带签名 thinking 只保存在私有状态。
+- [x] DeepSeek Flash Anthropic 兼容接口经 Demo Starter 收到完整结构化流及一次真实工具调用，工具别名映射恢复原名；本地协议契约覆盖 64 字符别名、签名续接及断流拒绝。
+- [ ] 工具交错、图片、取消、错误与带私有状态的长期恢复真实端到端验证；跨协议空状态 handoff 与重新读取已通过。
+- [ ] 独立“仅重置 ModelState”操作仍暂缓；普通续跑格式不匹配或过期必须明确失败，不自动无状态重试。其需求和 API 另行评审。
 
 ### R3 — OpenAI Responses HTTP Provider（暂缓，依赖 R1.8）
 
@@ -555,7 +502,7 @@ Admin/JDBC 管理是否必须先于第二种真实协议验证；单一事实源
 
 用户个人/租户级模型目录与自带 API Key、MCP 用户级/租户级配置、完整 OAuth、Resources、
 Prompts、Tasks、Sampling、Vault/KMS 默认实现也不在当前版本范围；未来只有真实需求确认后才
-进入待实现状态。R1.8 当前 Proposed 方案只包含全局 Admin 模型目录和按用户授权后的会话选择。
+进入待实现状态。当前 R1.8 最小阶段只提供部署模型目录与已认证用户的会话选择；完整模型 Admin/JDBC 管理暂缓。
 
 ## 路线图同步约定
 
@@ -572,6 +519,8 @@ Prompts、Tasks、Sampling、Vault/KMS 默认实现也不在当前版本范围�
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-09-25 | 修正总体进度快照中遗留的“R1.8 仍为 Proposed”表述，使状态与本页 R1.8 范围和未完成验收一致；不改变实施范围或验收条件。提交前复验 Corretto 8 全 Reactor 276 tests、Web 五包 262 tests、五包构建、四份 Bundle 一致性和文档相对链接。 |
+| 2026-09-24 | R1.8 最小部署目录、统一路由、会话目标与显式 handoff 已实施；R2 Anthropic Messages Adapter 接入，同一 DeepSeek Flash 的两种接口经 Demo 登录和 Starter SSE 返回完整 `message-stop`，Anthropic 真实工具调用恢复原名并以 `tool-use` 结束，会话 handoff 后重新读取保留历史与新目标。Corretto 8 全 Reactor 276 tests、Web 五包 262 tests、五包构建、四份 Bundle 一致性与文档相对链接检查均通过；真实宿主项目未选定，完整端到端协议矩阵、模型 Admin/JDBC 管理和远程 CI 仍待验收。ADR-005 接受新的配置边界，旧完整后台设计稿降为历史候选。 |
 | 2026-09-06 | 修复后续复审四项缺口：Tool Result 新增必填 execution，删除 Controller/Engine 临时集合协议，从完整历史恢复人工核实约束，覆盖取消后普通聊天保存与加载、拒绝和压缩前缀；Runtime 关闭执行门后同步交付最终消息，Controller 订阅重入停止旧快照广播，异常回调不会使 result 挂起；usage 新增必填 toolDefinitionTokens，保存基线覆盖目录、只计本轮增长差额；MCP 无密钥凭据摘要改为独立共享密钥 HMAC-SHA-256，补密钥配置、轮换与非法值验证。同步 Browser/Java/HTTP/JDBC 严格契约、指南、架构/ADR、Demo 与启动说明；Corretto 8 干净全 Reactor 273 tests、Web 五包 260 tests、五包构建和四份 Bundle 字节一致通过；旧会话迁移与密钥部署条件明确记录，真实宿主仍待选定 |
 | 2026-09-05 | 按复审意见修复首轮修复引入或未覆盖的 7 项问题，重开 VA-01/VA-03/VA-05 补齐组合场景后重新关闭：① Java 8 干净构建失败（测试使用 `String.repeat`），修正为 StringBuilder 辅助并披露此前“262 tests”验证实际运行在默认 JDK、声明不成立；② `ModelInputEstimator` 补 `ReasoningBlock` 计量，含思考块的合法历史可正常压缩且计入摘要预算；③ MCP 版本摘要纳入全部认证主体（凭据轮换/静态 Header 租户切换/Basic 用户名变化产生新版本并拒绝旧引用），修正“凭据不参与”的旧表述；④ 最终预算检查按 usage 来源区分基线覆盖：`provider` 基线不重复叠加工具目录，`estimated` 基线叠加本轮 Tool 定义；⑤ 摘要超限改抛 `ContextWindowExceededException` 并补齐 HTTP 映射（`ContextCompactionController` 纳入统一异常处理，413 `CONTEXT_WINDOW_EXCEEDED`）与审计错误码；⑥ Runtime 改为先完成内部状态转换再向外发布：未闭合跟踪提前到 Assistant 消息对外可见前、Tool 结果先收敛再发布、取消/失败终态无条件发布一致快照（发布重入安全），订阅/Hook 回调中取消不再破坏工具消息配对；⑦ “结果未知”运行时化：`AgentRunInput.unresolvedToolNames` + `AgentExecution.unresolvedToolCallNames()` + 中断 `reason` 字段，未核实 Tool 强制人工确认（即使只读），真实结果落地解除、拒绝不解除、会话切换清空，Widget 展示核实原因。同步 Runtime 契约、错误码、HTTP 契约、压缩指南；以真实 Corretto 8 重验 Java 8 全 Reactor 267 tests、Web 五包 256 tests、五包构建与四 Bundle 一致通过 |
 | 2026-09-05 | 修复审查登记的 VA-01～VA-05 五项跨层缺口：后端动态 Tool 新增定义/路由版本引用并贯穿发现与调用（MCP 内容确定性摘要、双实例一致、过期引用 409 `TOOL_VERSION_MISMATCH`）；Controller 首轮持久化固定完整保存命令并在写请求前校验执行归属；Runtime 取消/失败终态按事实补写 Tool 记录（未执行/结果未知/超限未回填）并保证下一轮输入严格配对；Java 注解 Tool 异常分类收敛为显式 ofError=业务失败、抛异常=脱敏终止；上下文配置新增 `reservedOutputTokens`，Browser 最终出站输入与服务端摘要请求执行统一窗口预算检查（`CONTEXT_WINDOW_EXCEEDED` 明确失败、保留完整历史）。同步 ToolRegistry/ToolProvider/ToolInvocationPipeline 签名、HTTP 契约（tools/call version、model/config reservedOutputTokens）、错误码、Runtime 契约、配置参考、压缩/Java 工具指南、ADR-001/003/004 与架构总览；Java 8 全 Reactor 262 tests、Web 五包 248 tests、五包构建与四 Bundle 同步通过；真实协议联调、宿主接入与估算边界真实验证仍属后续范围 |
@@ -619,7 +568,7 @@ Prompts、Tasks、Sampling、Vault/KMS 默认实现也不在当前版本范围�
 - [开源文档信息架构与中文写作体系重构方案](architecture/designs/documentation-system.md)
 - [ADR-003：Browser Agent Runtime 生产级执行守卫](architecture/adr/0003-browser-runtime-guards.md)
 - [ADR-004：完整聊天历史与模型工作上下文分离的压缩机制](architecture/adr/0004-context-compaction.md)
-- [ADR-005（Proposed）：可管理 ModelTarget、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
+- [ADR-005（Accepted）：部署模型目录、按会话路由与显式切换](architecture/adr/0005-model-target-routing-and-switching.md)
 - [可管理模型目标、按会话路由与显式切换技术方案](architecture/designs/model-target-registry-and-switching.md)
 - [使用上下文压缩](guides/context-compaction.md)
 - [Java 后端单次模型调用 API 设计](architecture/designs/java-model-gateway.md)

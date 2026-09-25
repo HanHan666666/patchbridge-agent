@@ -31,7 +31,7 @@ import type {
   ModelState,
   ToolDefinition,
 } from '../src/types';
-import { testContextManager, testModelContext } from './testContext';
+import { TEST_TARGET, testContextManager, testModelContext, testModelTargetClient } from './testContext';
 
 /** 单次可控执行句柄，事件、完成和取消都明确绑定自身。 */
 class FakeExecution implements AgentExecution {
@@ -161,6 +161,7 @@ class FakeConversationClient implements ConversationClient {
   public getImpl: (id: string) => Promise<ConversationDetail> = async id => ({
     conversation: conversation(id, 5),
     context: {
+      modelTarget: TEST_TARGET,
       messages: [textMessage(`user-${id}`, 'user', `会话 ${id}`)],
       modelContext: testModelContext(),
     },
@@ -177,9 +178,11 @@ class FakeConversationClient implements ConversationClient {
   }
 
   /** 模拟首轮创建会话。 */
-  async create(title: string | null): Promise<Conversation> {
+  async create(title: string | null, context: ConversationDetail['context']): Promise<Conversation> {
     this.createdTitles.push(title);
-    return this.createImpl(title);
+    const created = await this.createImpl(title);
+    this.saved.push({ id: created.conversationId, body: { title, revision: 0, context } });
+    return created;
   }
 
   /** 委托测试提供的加载脚本。 */
@@ -270,6 +273,7 @@ function makeController(contextManager: ContextManager = testContextManager()): 
   const toolClient = new FakeToolClient();
   const tools = new DefaultToolRegistry([new BackendToolProvider(toolClient)]);
   const controller = new DefaultAgentController({
+    modelTargets: testModelTargetClient(),
     engine,
     conversations,
     tools,
@@ -473,6 +477,7 @@ describe('DefaultAgentController', () => {
         revision: 0,
         context: {
           messages: [user, assistant],
+          modelTarget: TEST_TARGET,
           modelContext: testModelContext(MODEL_STATE),
         },
       },
@@ -501,6 +506,7 @@ describe('DefaultAgentController', () => {
     expect(conversations.saved).toHaveLength(1);
     expect(conversations.saved[0]?.body.context).toEqual({
       messages: [execution.input.conversation.messages.at(-1), assistant],
+      modelTarget: TEST_TARGET,
       modelContext: testModelContext(MODEL_STATE),
     });
     expect(controller.getState()).toMatchObject({
@@ -538,7 +544,7 @@ describe('DefaultAgentController', () => {
     const history = textMessage('user-history', 'user', '历史');
     conversations.getImpl = async id => ({
       conversation: conversation(id, 12, '旧会话'),
-      context: { messages: [history], modelContext: testModelContext(MODEL_STATE) },
+      context: { modelTarget: TEST_TARGET, messages: [history], modelContext: testModelContext(MODEL_STATE) },
     });
     await controller.loadConversation('conversation-7');
 
@@ -563,6 +569,7 @@ describe('DefaultAgentController', () => {
     const compact = vi.fn<ContextManager['compact']>(async () => { throw failure; });
     const { conversations, controller } = makeController(manualCompactionManager(compact));
     const originalContext = {
+      modelTarget: TEST_TARGET,
       messages: [
         textMessage('user-old', 'user', '旧问题'.repeat(100)),
         textMessage('assistant-old', 'assistant', '旧答案'.repeat(100)),
@@ -624,7 +631,7 @@ describe('DefaultAgentController', () => {
     ];
     conversations.getImpl = async id => ({
       conversation: conversation(id, 4, '压缩测试'),
-      context: { messages, modelContext: originalModelContext },
+      context: { messages, modelTarget: TEST_TARGET, modelContext: originalModelContext },
     });
     conversations.saveImpl = async () => { throw new Error('保存失败'); };
     await controller.initialize();
@@ -772,6 +779,7 @@ describe('DefaultAgentController', () => {
 
   it('导航代次阻止较早加载结果覆盖后发会话', async () => {
     const { conversations, controller } = makeController();
+    await controller.initialize();
     const resolvers = new Map<string, (detail: ConversationDetail) => void>();
     conversations.getImpl = id => new Promise(resolve => resolvers.set(id, resolve));
 
@@ -780,6 +788,7 @@ describe('DefaultAgentController', () => {
     resolvers.get('conversation-b')?.({
       conversation: conversation('conversation-b', 2),
       context: {
+        modelTarget: TEST_TARGET,
         messages: [textMessage('user-b', 'user', 'B')],
         modelContext: testModelContext(MODEL_STATE),
       },
@@ -788,6 +797,7 @@ describe('DefaultAgentController', () => {
     resolvers.get('conversation-a')?.({
       conversation: conversation('conversation-a', 1),
       context: {
+        modelTarget: TEST_TARGET,
         messages: [textMessage('user-a', 'user', 'A')],
         modelContext: testModelContext(),
       },
@@ -925,7 +935,7 @@ describe('DefaultAgentController', () => {
 
   // ---------- VA-02：首轮保存的完整快照与归属检查 ----------
 
-  it('VA-02：首轮创建挂起期间加载 B，保存体不得混用 A/B 且不提交迟到写请求', async () => {
+  it('VA-02：首轮原子创建挂起期间加载 B，A 的写入不混用 B 且迟到结果不覆盖视图', async () => {
     const { engine, conversations, controller } = makeController();
     // 挂起 A 的首轮创建请求
     let releaseCreate: ((value: Conversation) => void) | null = null;
@@ -953,8 +963,10 @@ describe('DefaultAgentController', () => {
     releaseCreate?.(conversation('conversation-A', 0, 'A 问题'));
     await sending;
 
-    // 保存写请求从未发出：A 的内容不能带着 B 的 ModelContext 提交
-    expect(conversations.saved).toHaveLength(0);
+    // 创建本身是一次完整写入；请求已经发出后，导航只能阻止本地迟到提交。
+    expect(conversations.saved).toHaveLength(1);
+    expect(conversations.saved[0]?.body.context.modelTarget).toEqual(TEST_TARGET);
+    expect(conversations.saved[0]?.body.context.messages.at(-1)?.id).toBe('assistant-a');
     // UI 保持 B；迟到结果不得覆盖当前视图
     expect(controller.getState().conversation?.conversationId).toBe('B');
     expect(controller.getState().messages).toEqual([
@@ -962,7 +974,7 @@ describe('DefaultAgentController', () => {
     ]);
   });
 
-  it('VA-02：创建挂起期间新建空会话同样阻止写请求', async () => {
+  it('VA-02：原子创建挂起期间新建空会话不追加第二次写入', async () => {
     const { engine, conversations, controller } = makeController();
     let releaseCreate: ((value: Conversation) => void) | null = null;
     conversations.createImpl = () => new Promise<Conversation>(resolve => {
@@ -982,12 +994,12 @@ describe('DefaultAgentController', () => {
     releaseCreate?.(conversation('conversation-A', 0));
     await sending;
 
-    expect(conversations.saved).toHaveLength(0);
+    expect(conversations.saved).toHaveLength(1);
     expect(controller.getState().conversation).toBeNull();
     expect(controller.getState().messages).toEqual([]);
   });
 
-  it('VA-02：创建挂起期间释放 Controller 同样阻止写请求', async () => {
+  it('VA-02：原子创建挂起期间释放 Controller 不追加第二次写入', async () => {
     const { engine, conversations, controller } = makeController();
     let releaseCreate: ((value: Conversation) => void) | null = null;
     conversations.createImpl = () => new Promise<Conversation>(resolve => {
@@ -1007,7 +1019,7 @@ describe('DefaultAgentController', () => {
     releaseCreate?.(conversation('conversation-A', 0));
     await sending;
 
-    expect(conversations.saved).toHaveLength(0);
+    expect(conversations.saved).toHaveLength(1);
   });
 
   it('VA-02：首轮创建失败产生明确错误结果，不留成功假象', async () => {
@@ -1091,6 +1103,7 @@ describe('DefaultAgentController', () => {
       },
     });
     const controller = new DefaultAgentController({
+    modelTargets: testModelTargetClient(),
       engine: runtime,
       conversations,
       tools,
@@ -1188,6 +1201,7 @@ describe('DefaultAgentController', () => {
       },
     });
     const controller = new DefaultAgentController({
+    modelTargets: testModelTargetClient(),
       engine: runtime,
       conversations,
       tools,
@@ -1256,7 +1270,8 @@ describe('DefaultAgentController', () => {
     const tools = new DefaultToolRegistry();
     const execute = vi.fn(() => '完成');
     tools.register({ name: 'page.query', description: '查询', inputSchema: { type: 'object' }, execute });
-    const controller = new DefaultAgentController({ engine: runtime, tools, callTrace,
+    const controller = new DefaultAgentController({
+    modelTargets: testModelTargetClient(), engine: runtime, tools, callTrace,
       conversations: new FakeConversationClient(), contextManager: testContextManager() });
     const unsubscribe = controller.subscribe(state => {
       if (state.runOutcome == null && state.messages.some(message =>

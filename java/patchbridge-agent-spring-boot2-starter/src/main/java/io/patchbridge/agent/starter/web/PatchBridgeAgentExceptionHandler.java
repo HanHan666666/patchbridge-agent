@@ -5,6 +5,7 @@ import io.patchbridge.agent.core.conversation.ConversationNotFoundException;
 import io.patchbridge.agent.core.compaction.ContextWindowExceededException;
 import io.patchbridge.agent.core.error.AgentErrorCode;
 import io.patchbridge.agent.core.error.ModelGatewayException;
+import io.patchbridge.agent.core.model.target.ModelTargetException;
 import io.patchbridge.agent.core.error.ToolAccessDeniedException;
 import io.patchbridge.agent.core.error.ToolExecutionException;
 import io.patchbridge.agent.core.error.ToolVersionMismatchException;
@@ -33,6 +34,7 @@ import java.util.Map;
         ModelStreamController.class,
         ConversationController.class,
         ContextCompactionController.class,
+        ModelTargetController.class,
         AdminApiController.class,
         McpAdminController.class
 })
@@ -100,6 +102,17 @@ public class PatchBridgeAgentExceptionHandler {
     @ExceptionHandler(McpException.class)
     public ResponseEntity<Map<String, Object>> mcpFailed(McpException e) {
         return error(HttpStatus.BAD_GATEWAY, "MCP_FAILED", e.getMessage(), null);
+    }
+
+    /** 目标错误可被调用者区分，失败时不自动选择其他目标。 */
+    @ExceptionHandler(ModelTargetException.class)
+    public ResponseEntity<Map<String, Object>> modelTarget(ModelTargetException e) {
+        String code = e.getCode();
+        HttpStatus status = "MODEL_TARGET_FORBIDDEN".equals(code) ? HttpStatus.FORBIDDEN
+                : "MODEL_TARGET_NOT_FOUND".equals(code) ? HttpStatus.NOT_FOUND
+                : "MODEL_TARGET_CONTEXT_TOO_LARGE".equals(code) ? HttpStatus.PAYLOAD_TOO_LARGE
+                : "AUTH_REQUIRED".equals(code) ? HttpStatus.UNAUTHORIZED : HttpStatus.CONFLICT;
+        return error(status, code, e.getMessage(), null);
     }
 
     /** 模型网关同步失败使用稳定 502；SSE 建立后的错误由流内 error 事件承载。 */

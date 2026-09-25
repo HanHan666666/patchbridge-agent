@@ -27,12 +27,30 @@ patchbridge-agent:
   admin:
     # Admin 默认关闭；Demo 显式开启，并由 DemoAdminAccessPolicy 复用现有权限体系。
     enabled: true
-  model:
-    base-url: ${PATCHBRIDGE_AGENT_MODEL_BASE_URL:}
-    model: ${PATCHBRIDGE_AGENT_MODEL:deepseek-v4-flash}
-    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY:}
-    # 必须与所选模型真实窗口一致；错误值会导致过早或过晚压缩，因此不提供默认值。
-    context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
+  models:
+    default-target: deepseek-anthropic
+    targets:
+      deepseek-anthropic:
+        display-name: DeepSeek Flash · Anthropic Messages
+        protocol: anthropic-messages
+        routing-revision: 1
+        base-url: https://api.deepseek.com/anthropic
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        # 窗口必须根据当前账户实际模型配置填写；不推测默认值。
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
+      deepseek-openai:
+        display-name: DeepSeek Flash · OpenAI Chat
+        protocol: openai-chat-completions
+        routing-revision: 1
+        base-url: https://api.deepseek.com
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
   mcp:
     # Demo 显式使用 Global JDBC 管理模式，不与 YAML Server 配置合并。
     # 生产密钥应由宿主密钥管理系统注入；Demo 也不提供默认值。

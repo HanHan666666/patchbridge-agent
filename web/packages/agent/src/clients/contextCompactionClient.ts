@@ -10,6 +10,7 @@ import type {
   ContextCompactionConfiguration,
   ContextCompactionTrigger,
   ModelState,
+  ModelTargetRef,
 } from '../types';
 import type { ModelCallContext, ModelUsage } from './modelClient';
 import {
@@ -22,6 +23,8 @@ import {
 
 /** 生成上下文检查点所需的完整服务端请求。 */
 export interface ContextCompactionRequest {
+  /** 摘要必须由当前会话目标生成。 */
+  readonly modelTarget: ModelTargetRef;
   /** 自动阈值或用户主动操作。 */
   readonly trigger: ContextCompactionTrigger;
   /** 固定保留的 system 消息与本次被淘汰的真实历史前缀。 */
@@ -50,8 +53,8 @@ export interface ContextCompactionResult {
 
 /** ContextManager 依赖的服务端压缩端口。 */
 export interface ContextCompactionGateway {
-  /** 读取服务端根据模型配置派生的唯一窗口参数。 */
-  configuration(signal?: AbortSignal): Promise<ContextCompactionConfiguration>;
+  /** 读取目标目录中的窗口参数，由服务端统一派生。 */
+  configuration(target: ModelTargetRef, signal?: AbortSignal): Promise<ContextCompactionConfiguration>;
   /** 使用当前模型生成摘要；取消和失败不得返回部分结果。 */
   compact(
     request: ContextCompactionRequest,
@@ -74,13 +77,20 @@ export class HttpContextCompactionGateway implements ContextCompactionGateway {
   }
 
   /** 读取并严格校验服务端模型窗口配置。 */
-  async configuration(signal?: AbortSignal): Promise<ContextCompactionConfiguration> {
-    const value = await requestJson<unknown>(
-      `${this.endpoint}/model/config`,
-      { method: 'GET', signal },
-      this.transport,
+  async configuration(target: ModelTargetRef, signal?: AbortSignal): Promise<ContextCompactionConfiguration> {
+    const value = await requestJson<{ targets: unknown }>(
+      `${this.endpoint}/model/targets`, { method: 'GET', signal }, this.transport,
     );
-    return requireConfiguration(value);
+    if (!Array.isArray(value.targets)) throw invalidStateError('模型目标目录必须包含 targets 数组');
+    const selected = value.targets.find(item => {
+      if (typeof item !== 'object' || item === null) return false;
+      const ref = (item as Record<string, unknown>).ref;
+      if (typeof ref !== 'object' || ref === null) return false;
+      const record = ref as Record<string, unknown>;
+      return record.targetId === target.targetId && record.routingRevision === target.routingRevision;
+    });
+    if (selected == null) throw invalidStateError('当前模型目标不可用或修订已变化');
+    return requireConfiguration((selected as Record<string, unknown>).configuration);
   }
 
   /** 发起一次不可流式的原子压缩调用。 */
@@ -99,7 +109,7 @@ export class HttpContextCompactionGateway implements ContextCompactionGateway {
 }
 
 /** 校验模型窗口配置的精确字段与跨字段约束。 */
-function requireConfiguration(value: unknown): ContextCompactionConfiguration {
+export function requireConfiguration(value: unknown): ContextCompactionConfiguration {
   const record = requireRecord(value, '模型配置');
   requireExactKeys(record, [
     'contextWindowTokens',

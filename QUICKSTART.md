@@ -14,7 +14,7 @@
 ## 2. 构建
 
 ```bash
-# Java 七个子模块（包含可选 model-webflux Adapter 与 demo）
+# Java 九个子模块（包含可选 model-webflux Adapter、Anthropic 协议内核与 Demo）
 cd java
 mvn install
 
@@ -40,12 +40,11 @@ cd java
 export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
 # MCP 工具版本使用另一份独立密钥；多实例共享且重启后保持不变
 export PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY='<另行生成的 32 字节密钥的 Base64>'
-# 模型地址和名称必须显式配置；API Key 是否必需由目标网关决定
-export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
-export PATCHBRIDGE_AGENT_MODEL='your-model'
-# 必须与所选模型的真实上下文窗口一致
-export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
-# export PATCHBRIDGE_AGENT_MODEL_API_KEY='<目标网关 API Key，仅在需要时取消注释>'
+# Demo 的两个目标均使用 DeepSeek Flash；凭据只通过环境变量注入
+export PATCHBRIDGE_AGENT_MODEL_API_KEY='<你的 DeepSeek API Key>'
+# 当前 Flash 官方上下文长度为 1M token；升级模型时重新核对
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='1048576'
+# 当前窗口与接口地址参见 https://api-docs.deepseek.com/quick_start/pricing/
 # 先安装当前多模块 Reactor，避免 Demo 误用本机仓库中的旧 SNAPSHOT
 mvn install -DskipTests
 mvn -pl patchbridge-agent-demo spring-boot:run
@@ -86,11 +85,19 @@ Admin Console 与 `/ai/admin/**` 默认关闭，不会因为引入 Starter 而�
 
 ```yaml
 patchbridge-agent:
-  model:
-    base-url: https://api.your-llm.com/v1     # OpenAI-compatible
-    model: your-model
-    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY} # 环境变量注入，浏览器永远拿不到
-    context-window-tokens: 128000 # 必须与所选模型真实窗口一致
+  models:
+    default-target: deepseek-anthropic
+    targets:
+      deepseek-anthropic:
+        display-name: DeepSeek Flash
+        protocol: anthropic-messages
+        routing-revision: 1
+        base-url: https://api.deepseek.com/anthropic
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
   mcp:
     tool-version-key: ${PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY}
     # 默认 properties：配置只读，不与 JDBC 数据合并

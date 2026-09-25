@@ -13,6 +13,7 @@ import io.patchbridge.agent.core.model.ModelStateProjector;
 import io.patchbridge.agent.core.model.ModelStopReason;
 import io.patchbridge.agent.core.model.TextBlock;
 
+import io.patchbridge.agent.core.model.target.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -35,22 +36,14 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
 
     /** 复用模型拦截器、Provider 与取消生命周期的 Java 门面。 */
     private final ModelGateway modelGateway;
-    /** 唯一有权解释当前 Provider 私有状态的投影器。 */
-    private final ModelStateProjector stateProjector;
-    /** 窗口与输出预留的唯一派生来源。 */
-    private final ContextCompactionSettings settings;
+    /** 普通请求、摘要与状态投影共享的目标边界。 */
+    private final ModelProviderRouter router;
 
-    /** 创建不持有会话状态的默认压缩服务。 */
-    public DefaultContextCompactionProvider(
-            ModelGateway modelGateway, ModelStateProjector stateProjector,
-            ContextCompactionSettings settings) {
-        if (modelGateway == null || stateProjector == null || settings == null) {
-            throw new IllegalArgumentException(
-                    "modelGateway / stateProjector / settings 不可为空");
-        }
+    /** 创建不持有会话或全局模型配置的摘要服务。 */
+    public DefaultContextCompactionProvider(ModelGateway modelGateway, ModelProviderRouter router) {
+        if (modelGateway == null || router == null) throw new IllegalArgumentException("modelGateway / router 不可为空");
         this.modelGateway = modelGateway;
-        this.stateProjector = stateProjector;
-        this.settings = settings;
+        this.router = router;
     }
 
     /** 构造摘要模型请求，执行预算检查后把最终结果映射成原子压缩结果。 */
@@ -60,6 +53,10 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
         if (request == null || context == null) {
             throw new IllegalArgumentException("request / context 不可为空");
         }
+        ResolvedModelTarget target = router.resolve(request.getModelTarget(),
+                context.getUser() == null ? ModelAccessContext.trustedJvm() : ModelAccessContext.authenticated(context.getUser()));
+        ContextCompactionSettings settings = target.getSettings();
+        ModelStateProjector stateProjector = target.getAdapter();
         List<AgentMessage> summaryMessages = buildSummaryMessages(request);
         // 摘要请求与普通请求共用同一窗口预算：淘汰前缀加保留尾部可能远大于压缩后的
         // 工作上下文，不能默认认为摘要请求天然更小；超限必须在调用模型前明确失败。
@@ -78,7 +75,7 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
         ModelRequest modelRequest =
                 new ModelRequest(
                         request.getResponseMessageId(),
-                        null,
+                        request.getModelTarget(),
                         summaryMessages,
                         Collections.emptyList(),
                         summaryState,
@@ -94,7 +91,7 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
                         return;
                     }
                     try {
-                        result.complete(toResult(request, response));
+                        result.complete(toResult(request, response, stateProjector));
                     } catch (RuntimeException e) {
                         result.completeExceptionally(e);
                     }
@@ -179,7 +176,7 @@ public final class DefaultContextCompactionProvider implements ContextCompaction
 
     /** 拒绝截断或缺计量响应，再投影保留消息所需的原 Provider 状态。 */
     private ContextCompactionResult toResult(
-            ContextCompactionRequest request, ModelResponse response) {
+            ContextCompactionRequest request, ModelResponse response, ModelStateProjector stateProjector) {
         if (response == null) {
             throw new ModelGatewayException("上下文摘要模型返回空响应", false);
         }

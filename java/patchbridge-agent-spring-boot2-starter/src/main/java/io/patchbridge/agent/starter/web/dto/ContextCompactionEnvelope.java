@@ -1,6 +1,7 @@
 package io.patchbridge.agent.starter.web.dto;
 
 import io.patchbridge.agent.core.compaction.ContextCompactionRequest;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import io.patchbridge.agent.core.conversation.ContextCompactionTrigger;
 import io.patchbridge.agent.core.conversation.ConversationContextValues;
 
@@ -29,6 +30,13 @@ public class ContextCompactionEnvelope {
 
     /** 上下文压缩请求 DTO。 */
     public static class Request {
+        /** 与摘要和状态投影绑定的公开目标引用。 */
+        private Map<String, Object> modelTarget;
+        /** 返回摘要目标。 */
+        public Map<String, Object> getModelTarget() { return modelTarget; }
+        /** 绑定目标，不从服务端默认值推测。 */
+        public void setModelTarget(Map<String, Object> value) { modelTarget = value; }
+
         /** automatic / manual。 */
         private String trigger;
         /** 固定 system 消息和被淘汰历史。 */
@@ -71,6 +79,7 @@ public class ContextCompactionEnvelope {
                 throw new IllegalArgumentException("request.splitTurn 必须显式提供");
             }
             return new ContextCompactionRequest(
+                    ModelTargetRef.fromValue(modelTarget),
                     ContextCompactionTrigger.fromWireValue(trigger),
                     ConversationContextValues.fromMessagesValue(messagesToSummarize),
                     ConversationContextValues.fromMessagesValue(retainedMessages),

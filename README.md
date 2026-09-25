@@ -199,7 +199,7 @@ agent.registerTool({
 | `ConversationOwnerResolver` | 多租户下的会话归属键 |
 | `ConversationRepository` | 会话存储（默认 JDBC，支持 H2 / MySQL） |
 | `AuditSink` / `AuditRedactor` | 审计落地位置与脱敏规则 |
-| `ModelProvider` | 模型来源（默认 OpenAI-compatible） |
+| `ModelTargetCatalog` / `ModelProviderRouter` | 部署模型目录与统一路由；内置 OpenAI Chat 和 Anthropic Messages 协议适配 |
 
 技术栈约束：Java Core 只依赖 JDK 8，零 Spring 依赖；Spring Boot 2 Starter 是适配层，负责自动装配和默认实现。存量系统不用为接入 AI 升级 JDK 或 Spring Boot。
 
@@ -407,11 +407,19 @@ Widget 通过 Starter 内置的前端产物加载，宿主无需 Node 工具链�
 
 ```yaml
 patchbridge-agent:
-  model:
-    base-url: https://api.your-llm.com/v1   # OpenAI-compatible
-    model: your-model
-    api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}   # 环境变量注入，浏览器拿不到
-    context-window-tokens: 128000   # 必须与所选模型真实窗口一致
+  models:
+    default-target: deepseek-anthropic
+    targets:
+      deepseek-anthropic:
+        display-name: DeepSeek Flash
+        protocol: anthropic-messages
+        routing-revision: 1
+        base-url: https://api.deepseek.com/anthropic
+        model: deepseek-flash
+        api-key: ${PATCHBRIDGE_AGENT_MODEL_API_KEY}
+        image-input: true
+        tool-calling: true
+        context-window-tokens: ${PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS}
 ```
 
 会话与审计默认经 JDBC 存储（H2 / MySQL）。远程 MCP 为可选项，在 `patchbridge-agent.mcp` 下配置。完整配置项见[配置参考](docs/reference/configuration.md)，逐步接入见[Spring Boot 接入指南](docs/guides/spring-boot-integration.md)。
@@ -482,10 +490,9 @@ cd java
 export PATCHBRIDGE_AGENT_MCP_ENCRYPTION_KEY='<32 字节密钥的 Base64>'
 # 工具版本使用独立密钥；同一部署的所有实例共享
 export PATCHBRIDGE_AGENT_MCP_TOOL_VERSION_KEY='<另行生成的 32 字节密钥的 Base64>'
-# 模型地址与名称必须显式配置
-export PATCHBRIDGE_AGENT_MODEL_BASE_URL='https://api.your-llm.com/v1'
-export PATCHBRIDGE_AGENT_MODEL='your-model'
-export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='128000'
+# Demo 使用 DeepSeek Flash；凭据只通过环境变量注入
+export PATCHBRIDGE_AGENT_MODEL_API_KEY='<你的 DeepSeek API Key>'
+export PATCHBRIDGE_AGENT_MODEL_CONTEXT_WINDOW_TOKENS='1048576'
 mvn install -DskipTests
 mvn -pl patchbridge-agent-demo spring-boot:run
 ```

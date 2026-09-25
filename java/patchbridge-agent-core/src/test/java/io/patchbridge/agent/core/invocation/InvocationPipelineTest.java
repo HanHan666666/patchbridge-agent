@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.invocation;
 
+import io.patchbridge.agent.core.model.ModelTestTargets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -109,14 +110,14 @@ class InvocationPipelineTest {
                 };
         ModelInvocationPipeline pipeline =
                 new ModelInvocationPipeline(
-                        provider,
+                        ModelTestTargets.router(provider),
                         Arrays.asList(
                                 modelInterceptor("first", events, context),
                                 modelInterceptor("second", events, context)));
         ModelRequest request =
                 new ModelRequest(
                         "response-1",
-                        "model",
+                        ModelTestTargets.REF,
                         Collections.emptyList(),
                         Collections.emptyList(),
                         null,
@@ -153,7 +154,7 @@ class InvocationPipelineTest {
         AtomicReference<Throwable> received = new AtomicReference<Throwable>();
         ModelInvocationPipeline pipeline =
                 new ModelInvocationPipeline(
-                        provider,
+                        ModelTestTargets.router(provider),
                         Arrays.asList(
                                 modelInterceptor("first", events, context),
                                 modelInterceptor("second", events, context)));
@@ -191,7 +192,7 @@ class InvocationPipelineTest {
         AtomicReference<Throwable> received = new AtomicReference<Throwable>();
         ModelInvocationPipeline pipeline =
                 new ModelInvocationPipeline(
-                        provider,
+                        ModelTestTargets.router(provider),
                         Arrays.asList(
                                 modelInterceptor("first", events, context),
                                 modelInterceptor("second", events, context)));
@@ -248,7 +249,7 @@ class InvocationPipelineTest {
                 };
         ModelInvocationPipeline pipeline =
                 new ModelInvocationPipeline(
-                        provider,
+                        ModelTestTargets.router(provider),
                         Arrays.asList(modelInterceptor("first", events, context), failing));
 
         assertThrows(
@@ -268,7 +269,7 @@ class InvocationPipelineTest {
     private static ModelRequest modelRequest() {
         return new ModelRequest(
                 "response-1",
-                "model",
+                ModelTestTargets.REF,
                 Collections.emptyList(),
                 Collections.emptyList(),
                 null,

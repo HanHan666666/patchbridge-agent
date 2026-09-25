@@ -6,7 +6,6 @@ import io.patchbridge.agent.core.compaction.ContextCompactionInvocation;
 import io.patchbridge.agent.core.compaction.ContextCompactionProvider;
 import io.patchbridge.agent.core.compaction.ContextCompactionRequest;
 import io.patchbridge.agent.core.compaction.ContextCompactionResult;
-import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
 import io.patchbridge.agent.core.compaction.ContextWindowExceededException;
 import io.patchbridge.agent.core.context.AiRequestContext;
 import io.patchbridge.agent.core.error.AgentErrorCode;
@@ -18,7 +17,6 @@ import io.patchbridge.agent.starter.web.dto.ContextCompactionEnvelope;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,14 +26,15 @@ import org.springframework.web.context.request.async.DeferredResult;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import io.patchbridge.agent.core.model.target.ModelConversationService;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 模型上下文配置与压缩 HTTP Adapter。
+ * 当前目标的上下文压缩 HTTP Adapter。
  *
- * <p>GET 只公开窗口派生值，不公开凭据或 Provider 配置；POST 使用当前登录用户和当前
- * ModelGateway 生成摘要。Servlet 断开、超时或错误会取消同一次真实模型调用。
+ * <p>窗口参数由模型目录公开；这里核对登录用户、会话和请求目标后，使用同一 Router
+ * 生成摘要。Servlet 断开、超时或错误会取消同一次真实模型调用。
  */
 @RestController
 @ConditionalOnProperty(
@@ -46,40 +45,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequestMapping("${patchbridge-agent.base-path:/ai}")
 public class ContextCompactionController {
 
-    /** 服务端唯一窗口配置。 */
-    private final ContextCompactionSettings settings;
+    /** 检查会话当前目标与压缩请求一致。 */
+    private final ModelConversationService modelConversations;
     /** 当前模型摘要应用端口。 */
     private final ContextCompactionProvider provider;
     /** 当前可信用户解析器。 */
     private final CurrentUserResolver currentUser;
     /** 压缩调用审计入口。 */
     private final AuditRecorder audit;
-    /** 审计使用的当前默认模型名。 */
-    private final String defaultModel;
 
     /** 创建上下文压缩 Controller。 */
     public ContextCompactionController(
-            ContextCompactionSettings settings,
+            ModelConversationService modelConversations,
             ContextCompactionProvider provider,
             CurrentUserProvider userProvider,
-            AuditRecorder audit,
-            String defaultModel) {
-        this.settings = settings;
+            AuditRecorder audit) {
+        this.modelConversations = modelConversations;
         this.provider = provider;
         this.currentUser = new CurrentUserResolver(userProvider);
         this.audit = audit;
-        this.defaultModel = defaultModel;
-    }
-
-    /** 返回 Browser 自动和手动压缩共用的模型窗口参数。 */
-    @GetMapping(value = "/model/config", produces = MediaType.APPLICATION_JSON_VALUE)
-    public Map<String, Object> configuration() {
-        Map<String, Object> body = new LinkedHashMap<String, Object>();
-        body.put("contextWindowTokens", settings.getContextWindowTokens());
-        body.put("automaticThresholdTokens", settings.getAutomaticThresholdTokens());
-        body.put("keepRecentTokens", settings.getKeepRecentTokens());
-        body.put("reservedOutputTokens", settings.getReservedOutputTokens());
-        return body;
     }
 
     /** 启动异步摘要调用并返回与 Servlet 生命周期绑定的结果。 */
@@ -94,6 +78,7 @@ public class ContextCompactionController {
         }
         UserContext user = currentUser.requiredUser();
         ContextCompactionRequest request = envelope.toDomain();
+        modelConversations.requireCurrent(user, envelope.getConversationId(), request.getModelTarget());
         String traceId = blankToRandom(envelope.getTraceId());
         AiRequestContext context =
                 new AiRequestContext(
@@ -203,7 +188,7 @@ public class ContextCompactionController {
                 user,
                 AuditInvocationType.COMPACTION,
                 "MODEL",
-                defaultModel,
+                request.getModelTarget().getTargetId() + "@" + request.getModelTarget().getRoutingRevision(),
                 success,
                 errorCode,
                 errorMessage,

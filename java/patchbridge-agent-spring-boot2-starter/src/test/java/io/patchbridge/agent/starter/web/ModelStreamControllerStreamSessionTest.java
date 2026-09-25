@@ -3,6 +3,7 @@ package io.patchbridge.agent.starter.web;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 import io.patchbridge.agent.core.audit.AuditEvent;
 import io.patchbridge.agent.core.audit.AuditSink;
@@ -15,6 +16,12 @@ import io.patchbridge.agent.core.model.ModelProvider;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelStreamEvent;
 import io.patchbridge.agent.core.model.ModelStreamListener;
+import io.patchbridge.agent.core.model.ModelProtocolAdapter;
+import io.patchbridge.agent.core.model.ModelState;
+import io.patchbridge.agent.core.model.AgentMessage;
+import io.patchbridge.agent.core.model.target.*;
+import io.patchbridge.agent.core.conversation.ConversationRepository;
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
 import io.patchbridge.agent.core.user.UserContext;
 import io.patchbridge.agent.core.invocation.ModelInvocationPipeline;
 import io.patchbridge.agent.starter.PatchBridgeAgentProperties;
@@ -46,6 +53,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * 因此无需容器即可驱动完整会话。
  */
 class ModelStreamControllerStreamSessionTest {
+    /** 真实路由与请求 DTO 共同使用的模型目标。 */
+    private static final ModelTargetRef REF = new ModelTargetRef("race-model", 1);
 
     /** 事件发送进行中时，失败终止必须等待发送结束；终止后不得再出现任何新帧。 */
     @Test
@@ -62,11 +71,13 @@ class ModelStreamControllerStreamSessionTest {
                 return () -> providerCancels.incrementAndGet();
             }
         };
+        ModelProviderRouter modelRouter = router(provider);
         ModelStreamController controller = new ModelStreamController(
-                new ModelInvocationPipeline(provider, Collections.emptyList()),
+                new ModelInvocationPipeline(modelRouter, Collections.emptyList()),
                 userProvider(),
                 recorder(audits),
-                "default-model",
+                new ModelConversationService(mock(ConversationRepository.class),
+                        user -> user.getUserId(), modelRouter),
                 mapper);
 
         Map<String, Object> block = new LinkedHashMap<String, Object>();
@@ -78,6 +89,7 @@ class ModelStreamControllerStreamSessionTest {
         message.put("blocks", Collections.singletonList(block));
         ModelStreamEnvelope.Request requestDto = new ModelStreamEnvelope.Request();
         requestDto.setResponseMessageId("resp-race");
+        requestDto.setModelTarget(REF.toValue());
         requestDto.setMessages(Collections.singletonList(message));
         requestDto.setTools(Collections.emptyList());
         requestDto.setModelState(null);
@@ -113,6 +125,24 @@ class ModelStreamControllerStreamSessionTest {
         terminal.onEvent(deltaEvent());
         assertEquals(2, mapper.serializedFrames.get(), "终止后不得再发送任何事件帧");
         assertEquals(1, audits.size());
+    }
+
+    /** 并发发送测试仍验证真实 Router 到模型流的完整管线。 */
+    private static ModelProviderRouter router(ModelProvider provider) {
+        ModelProtocolAdapter adapter = new ModelProtocolAdapter() {
+            /** 此用例仅检查 SSE 终态，不解释厂商编码。 */
+            @Override public void validate(ModelRequest request) { }
+            /** 将监听器交给可控模型替身。 */
+            @Override public ModelCall stream(ModelRequest request, ModelStreamListener listener) {
+                return provider.stream(request, listener);
+            }
+            /** 该请求没有私有续接状态。 */
+            @Override public ModelState project(ModelState state, List<AgentMessage> messages) { return state; }
+        };
+        ResolvedModelTarget target = new ResolvedModelTarget(REF, "并发模型", "test", true,
+                true, true, new ContextCompactionSettings(128000, 20000, 12800), adapter);
+        return new ModelProviderRouter(new ImmutableModelTargetCatalog(
+                Collections.singletonList(target), REF), (access, selected) -> true);
     }
 
     /** 首帧停在栅栏上的序列化器：把事件发送卡在会话锁内，制造真实并发窗口。 */

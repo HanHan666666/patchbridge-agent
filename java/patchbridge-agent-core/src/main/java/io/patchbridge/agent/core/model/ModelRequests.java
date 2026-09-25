@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.model;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -31,8 +32,8 @@ public final class ModelRequests {
         /** 可选的显式响应消息标识；未设置时在 build 阶段生成。 */
         private String responseMessageId;
 
-        /** 可选模型覆盖名。 */
-        private String model;
+        /** 必须由宿主显式选择的部署目标。 */
+        private ModelTargetRef modelTarget;
 
         /** 按调用顺序积累的 System 文本块。 */
         private final List<ContentBlock> systemBlocks = new ArrayList<ContentBlock>();
@@ -76,9 +77,9 @@ public final class ModelRequests {
             return this;
         }
 
-        /** 设置由目标 Provider 解释的模型名称。 */
-        public Builder model(String model) {
-            this.model = model;
+        /** 设置目录中的目标身份，避免业务调用绕过统一路由。 */
+        public Builder modelTarget(ModelTargetRef modelTarget) {
+            this.modelTarget = modelTarget;
             return this;
         }
 
@@ -102,6 +103,9 @@ public final class ModelRequests {
 
         /** 构建只包含现有领域对象的不可变请求。 */
         public ModelRequest build() {
+            if (modelTarget == null) {
+                throw new IllegalStateException("modelTarget 不可为空");
+            }
             List<AgentMessage> messages = new ArrayList<AgentMessage>(2);
             if (!systemBlocks.isEmpty()) {
                 messages.add(
@@ -121,7 +125,7 @@ public final class ModelRequests {
                     responseMessageId == null ? newMessageId() : responseMessageId;
             return new ModelRequest(
                     resultMessageId,
-                    model,
+                    modelTarget,
                     messages,
                     Collections.<ModelToolDefinition>emptyList(),
                     modelState,

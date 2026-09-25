@@ -36,6 +36,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import io.patchbridge.agent.core.model.target.ModelConversationService;
+import io.patchbridge.agent.core.model.target.ModelTargetException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -70,8 +72,8 @@ public class ModelStreamController {
     /** 模型调用审计记录器。 */
     private final AuditRecorder audit;
 
-    /** 请求未覆盖时用于审计的默认模型名称。 */
-    private final String defaultModel;
+    /** 核对请求目标与已保存会话当前目标，防止流式入口绕过显式切换。 */
+    private final ModelConversationService modelConversations;
 
     /** 只用于框架结构事件序列化的宿主 Jackson 配置。 */
     private final ObjectMapper objectMapper;
@@ -81,12 +83,12 @@ public class ModelStreamController {
             ModelInvocationPipeline invocationPipeline,
             CurrentUserProvider userProvider,
             AuditRecorder audit,
-            String defaultModel,
+            ModelConversationService modelConversations,
             ObjectMapper objectMapper) {
         this.invocationPipeline = invocationPipeline;
         this.currentUser = new CurrentUserResolver(userProvider);
         this.audit = audit;
-        this.defaultModel = defaultModel;
+        this.modelConversations = modelConversations;
         this.objectMapper = objectMapper;
     }
 
@@ -104,7 +106,8 @@ public class ModelStreamController {
         String traceId = blankToRandom(envelope.getTraceId());
         String conversationId = envelope.getConversationId();
         ModelRequest request = toModelRequest(envelope.getRequest());
-        String modelName = request.getModel() != null ? request.getModel() : defaultModel;
+        modelConversations.requireCurrent(user, conversationId, request.getModelTarget());
+        String modelName = request.getModelTarget().getTargetId() + "@" + request.getModelTarget().getRoutingRevision();
         AiRequestContext context = new AiRequestContext(user, traceId, null, null, conversationId);
 
         SseEmitter emitter = new SseEmitter(0L);
@@ -207,10 +210,10 @@ public class ModelStreamController {
     }
 
     /** 构造浏览器 Runtime 可识别且带明确重试语义的流内错误帧。 */
-    private String errorFrame(String message, boolean retryable) {
+    private String errorFrame(String code, String message, boolean retryable) {
         try {
             Map<String, Object> error = new LinkedHashMap<String, Object>();
-            error.put("code", AgentErrorCode.MODEL_FAILED);
+            error.put("code", code);
             error.put("message", message == null ? "模型调用失败" : truncate(message, 300));
             error.put("retryable", retryable);
             Map<String, Object> frame = new LinkedHashMap<String, Object>();
@@ -334,11 +337,11 @@ public class ModelStreamController {
                         error instanceof ModelGatewayException
                                 && ((ModelGatewayException) error).isRetryable();
                 try {
-                    emitter.send(errorFrame(message, retryable), MediaType.APPLICATION_JSON);
+                    emitter.send(errorFrame(error instanceof ModelTargetException ? ((ModelTargetException) error).getCode() : AgentErrorCode.MODEL_FAILED, message, retryable), MediaType.APPLICATION_JSON);
                 } catch (Exception ignored) {
                     // 浏览器已经断开时无法再传递错误帧，取消与审计仍继续执行。
                 }
-                recordAudit(false, AgentErrorCode.MODEL_FAILED, message);
+                recordAudit(false, error instanceof ModelTargetException ? ((ModelTargetException) error).getCode() : AgentErrorCode.MODEL_FAILED, message);
                 log.warn("模型流转发失败 traceId={}: {}", traceId, message);
                 emitter.complete();
             }

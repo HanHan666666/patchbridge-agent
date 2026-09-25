@@ -46,7 +46,7 @@ Widget 渲染都不会把摘要伪装成用户消息。两个字段仍使用同�
 
 ### 2.2 窗口配置与固定预算
 
-宿主必须配置 `patchbridge-agent.model.context-window-tokens`。框架不猜模型窗口，也不维护
+宿主必须配置 每个 `patchbridge-agent.models.targets.<id>.context-window-tokens`。框架不猜模型窗口，也不维护
 可能过期的模型名称映射。
 
 - 自动压缩阈值固定为 `floor(contextWindowTokens × 0.80)`；
@@ -54,7 +54,7 @@ Widget 渲染都不会把摘要伪装成用户消息。两个字段仍使用同�
 - 宿主只有明确需要时才用 `model.keep-recent-tokens` 覆盖近期预算；该值必须大于 0 且小于自动阈值；
 - 默认输出预留为 `floor(contextWindowTokens × 0.10)`，宿主可用 `model.reserved-output-tokens`
   覆盖；该值必须大于 0 且与自动阈值之和小于窗口（2026-09-05 审查 VA-05 补充）；
-- Browser 初始化时从 `GET {basePath}/model/config` 取得服务端派生值，不另设前端默认值。
+- Browser 初始化时从 `GET {basePath}/model/targets` 取得服务端派生值，不另设前端默认值。
 
 ### 2.3 Browser 是工作上下文编排的唯一入口
 

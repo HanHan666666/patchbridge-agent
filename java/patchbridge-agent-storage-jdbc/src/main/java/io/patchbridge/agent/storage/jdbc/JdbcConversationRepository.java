@@ -9,6 +9,7 @@ import io.patchbridge.agent.core.conversation.ConversationRepository;
 import io.patchbridge.agent.core.conversation.ConversationSnapshot;
 import io.patchbridge.agent.core.conversation.ModelContext;
 import io.patchbridge.agent.core.model.AgentMessage;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import io.patchbridge.agent.core.model.MessageRole;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -94,28 +95,22 @@ public class JdbcConversationRepository implements ConversationRepository {
         this.objectMapper = objectMapper;
     }
 
-    /** 在指定 ownerKey 下创建带明确空 ModelContext 的空会话。 */
+    /** 首轮完整上下文在一个事务内创建，失败回滚，不遗留空会话。 */
     @Override
-    public Conversation create(String ownerKey, String title) {
+    public Conversation create(final String ownerKey, final String title, ConversationContext context) {
         requireOwnerKey(ownerKey);
-        String id = newId();
-        Date now = new Date();
-        String emptyModelContextJson =
-                writeRequestJson(
-                        ConversationContextValues.toModelContextValue(ModelContext.empty()),
-                        "空 modelContext");
-        jdbc.update(
-                "INSERT INTO agent_conversation "
-                        + "(conversation_id, owner_key, title, revision, status, "
-                        + "model_context_json, created_at, updated_at) "
-                        + "VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?, ?)",
-                id,
-                ownerKey,
-                title,
-                emptyModelContextJson,
-                new Timestamp(now.getTime()),
-                new Timestamp(now.getTime()));
-        return findConversation(ownerKey, id);
+        if (context == null) throw new IllegalArgumentException("context 不可为空");
+        final EncodedContext encoded = encodeContext(context);
+        return writeTransaction.execute(status -> {
+            String id = newId();
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("INSERT INTO agent_conversation "
+                    + "(conversation_id, owner_key, title, revision, status, model_context_json, model_target_json, created_at, updated_at) "
+                    + "VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?, ?, ?)",
+                    id, ownerKey, title, encoded.modelContextJson, encoded.modelTargetJson, now, now);
+            insertMessages(id, encoded.messages, now);
+            return findConversation(ownerKey, id);
+        });
     }
 
     /** 使用可重复读事务返回 ownerKey 可见的完整一致性快照。 */
@@ -197,7 +192,7 @@ public class JdbcConversationRepository implements ConversationRepository {
                 jdbc.query(
                         "SELECT "
                                 + CONVERSATION_COLUMNS
-                                + ", model_context_json FROM agent_conversation WHERE conversation_id"
+                                + ", model_context_json, model_target_json FROM agent_conversation WHERE conversation_id"
                                 + " = ? AND owner_key = ?",
                         new RowMapper<ConversationStateRow>() {
                             @Override
@@ -205,7 +200,7 @@ public class JdbcConversationRepository implements ConversationRepository {
                                     throws SQLException {
                                 return new ConversationStateRow(
                                         CONVERSATION_MAPPER.mapRow(rs, rowNum),
-                                        rs.getString("model_context_json"));
+                                        rs.getString("model_context_json"), rs.getString("model_target_json"));
                             }
                         },
                         conversationId,
@@ -217,7 +212,7 @@ public class JdbcConversationRepository implements ConversationRepository {
         List<AgentMessage> messages = loadMessages(ownerKey, conversationId);
         ModelContext modelContext = decodeModelContext(row.modelContextJson, conversationId);
         return new ConversationSnapshot(
-                row.conversation, new ConversationContext(messages, modelContext));
+                row.conversation, new ConversationContext(messages, ModelTargetRef.fromValue(readStoredJson(row.modelTargetJson, "modelTarget")), modelContext));
     }
 
     /** 乐观锁成功后在同一事务中替换 ModelContext 与全部消息。 */
@@ -231,11 +226,12 @@ public class JdbcConversationRepository implements ConversationRepository {
         int updated =
                 jdbc.update(
                         "UPDATE agent_conversation SET revision = revision + 1, updated_at = ?, "
-                                + "title = COALESCE(?, title), model_context_json = ? "
+                                + "title = COALESCE(?, title), model_context_json = ?, model_target_json = ? "
                                 + "WHERE conversation_id = ? AND owner_key = ? AND revision = ?",
                         new Timestamp(now.getTime()),
                         title,
                         context.modelContextJson,
+                        context.modelTargetJson,
                         conversationId,
                         ownerKey,
                         expectedRevision);
@@ -251,20 +247,16 @@ public class JdbcConversationRepository implements ConversationRepository {
         }
 
         jdbc.update("DELETE FROM agent_message WHERE conversation_id = ?", conversationId);
-        Timestamp createdAt = new Timestamp(now.getTime());
-        for (EncodedMessage message : context.messages) {
-            jdbc.update(
-                    "INSERT INTO agent_message "
-                            + "(message_id, conversation_id, seq, role, blocks_json, created_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?)",
-                    message.id,
-                    conversationId,
-                    message.sequence,
-                    message.role,
-                    message.blocksJson,
-                    createdAt);
-        }
+        insertMessages(conversationId, context.messages, new Timestamp(now.getTime()));
         return findConversation(ownerKey, conversationId);
+    }
+
+    /** 创建与保存共用消息行写入规则，调用者已经持有完整聚合事务。 */
+    private void insertMessages(String conversationId, List<EncodedMessage> messages, Timestamp createdAt) {
+        for (EncodedMessage message : messages) {
+            jdbc.update("INSERT INTO agent_message (message_id, conversation_id, seq, role, blocks_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    message.id, conversationId, message.sequence, message.role, message.blocksJson, createdAt);
+        }
     }
 
     /** 使用显式元数据列查询单个会话，不触碰 ModelContext。 */
@@ -324,7 +316,7 @@ public class JdbcConversationRepository implements ConversationRepository {
                         ConversationContextValues.toModelContextValue(
                                 context.getModelContext()),
                         "modelContext");
-        return new EncodedContext(messages, modelContextJson);
+        return new EncodedContext(messages, modelContextJson, writeRequestJson(context.getModelTarget().toValue(), "modelTarget"));
     }
 
     /** 把持久化 ModelContext JSON 恢复为领域状态；为空或损坏时明确失败。 */
@@ -378,11 +370,14 @@ public class JdbcConversationRepository implements ConversationRepository {
 
         /** 尚未解释的状态 JSON。 */
         private final String modelContextJson;
+        /** 与工作上下文原子保存的目标身份。 */
+        private final String modelTargetJson;
 
         /** 创建数据库内部行快照。 */
-        private ConversationStateRow(Conversation conversation, String modelContextJson) {
+        private ConversationStateRow(Conversation conversation, String modelContextJson, String modelTargetJson) {
             this.conversation = conversation;
             this.modelContextJson = modelContextJson;
+            this.modelTargetJson = modelTargetJson;
         }
     }
 
@@ -393,11 +388,14 @@ public class JdbcConversationRepository implements ConversationRepository {
 
         /** 不可空的完整 ModelContext JSON。 */
         private final String modelContextJson;
+        /** 与工作上下文原子保存的目标身份。 */
+        private final String modelTargetJson;
 
         /** 创建不可变 JDBC 参数快照。 */
-        private EncodedContext(List<EncodedMessage> messages, String modelContextJson) {
+        private EncodedContext(List<EncodedMessage> messages, String modelContextJson, String modelTargetJson) {
             this.messages = Collections.unmodifiableList(new ArrayList<EncodedMessage>(messages));
             this.modelContextJson = modelContextJson;
+            this.modelTargetJson = modelTargetJson;
         }
     }
 

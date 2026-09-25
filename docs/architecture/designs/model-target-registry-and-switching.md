@@ -1,13 +1,15 @@
 # 可管理模型目标、按会话路由与显式切换技术方案
 
 - 文档类型：实施设计
-- 状态：待讨论
+- 状态：历史候选设计，未按此版本实施；当前边界以 ADR-005 和路线图为准
 - 关联里程碑：R1.8
-- 最近更新：2026-08-29
+- 最近更新：2026-09-24（仅更新状态说明）
 - 实施基线：`d2a787b`
 - 适用范围：Java 8 Core、Spring Boot 2 Starter、JDBC、Model Provider、Conversation、Browser Runtime、默认 Widget、Admin Console 与 Demo
 - 关联决策：[ADR-001](../adr/0001-provider-neutral-runtime.md)、[ADR-002](../adr/0002-model-state-lifecycle.md)、[ADR-004](../adr/0004-context-compaction.md)、[ADR-005（Proposed）](../adr/0005-model-target-routing-and-switching.md)
-- 权威边界：本文定义待实施方案；当前已经实现的能力仍以[架构总览](../overview.md)、Reference 和[路线图](../../roadmap.md)为准
+- 权威边界：本文保留 2026-08-29 完整 JDBC/Admin 方案供将来评审，不是当前实现说明；实际配置来源和路由决策以[ADR-005](../adr/0005-model-target-routing-and-switching.md)、[配置参考](../../reference/configuration.md)及[路线图](../../roadmap.md)为准
+
+> 2026-09-24 决策变更：维护者选择 `application.yml` 多目标配置与 Anthropic Messages 第二协议，完整模型管理后台暂缓。下文保留原提案，不作为当前代码的事实描述。
 
 ## 1. 结论先行
 

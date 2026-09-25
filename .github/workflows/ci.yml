@@ -1,0 +1,54 @@
+# 验证源码与随 Starter 分发的前端产物；真实外部服务联调由人工明确发起。
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  java:
+    name: Java 8 Reactor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '8'
+          cache: maven
+          cache-dependency-path: 'java/**/pom.xml'
+      - name: 测试并构建全部 Java 模块
+        working-directory: java
+        run: mvn --batch-mode --no-transfer-progress clean verify
+  web:
+    name: Browser 与 Starter Bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 按锁文件安装依赖
+        working-directory: web
+        run: npm ci
+      - name: 验证五个 Browser workspace
+        working-directory: web
+        run: npm test
+      - name: 重建并复制 Starter 内嵌产物
+        working-directory: web
+        run: npm run build
+      # build 会覆盖资源目录，必须与提交版本比较，避免仅比较两份刚复制的文件。
+      - name: 拒绝未同步的 Starter Bundle
+        run: git diff --exit-code -- java/patchbridge-agent-spring-boot2-starter/src/main/resources/META-INF/patchbridge-agent/

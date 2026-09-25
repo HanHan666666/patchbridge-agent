@@ -18,15 +18,20 @@
 | 400 | <code>INVALID_ARGUMENT</code> | 严格 DTO、非法 JSON、缺参或类型错误 |
 | 401 | <code>AUTH_REQUIRED</code> | 未登录或登录态失效 |
 | 403 | <code>TOOL_FORBIDDEN</code> | Tool 二次授权拒绝 |
+| 403 | <code>MODEL_TARGET_FORBIDDEN</code> | 当前身份不能使用目标 |
 | 403 | <code>ADMIN_FORBIDDEN</code> | Admin 能力拒绝或未知管理路由 |
 | 404 | <code>TOOL_FAILED</code> | Tool 不存在 |
 | 404 | <code>CONVERSATION_NOT_FOUND</code> | 当前 owner 范围找不到会话 |
+| 404 | <code>MODEL_TARGET_NOT_FOUND</code> | 目标 ID 不在目录 |
 | 409 | <code>CONVERSATION_CONFLICT</code> | 会话 revision 冲突 |
+| 409 | <code>MODEL_TARGET_DISABLED</code> / <code>MODEL_TARGET_REVISION_MISMATCH</code> | 目标已停用或配置修订与请求不符 |
+| 409 | <code>MODEL_TARGET_MISMATCH</code> / <code>MODEL_TARGET_INCOMPATIBLE</code> | 普通保存试图换目标，或目标不能原样编码工作上下文 |
 | 409 | <code>TOOL_VERSION_MISMATCH</code> | Tool 定义/路由版本引用已过期，需重新发现工具 |
 | 409 | <code>MCP_CONFIG_CONFLICT</code> | MCP 名称或 revision 冲突 |
 | 409 | <code>MCP_CONFIG_READ_ONLY</code> | properties 模式写操作 |
 | 500 | <code>TOOL_FAILED</code> | Tool 执行异常 |
 | 413 | <code>CONTEXT_WINDOW_EXCEEDED</code> | 上下文摘要请求超过“窗口 − 输出预留”预算 |
+| 413 | <code>MODEL_TARGET_CONTEXT_TOO_LARGE</code> | handoff 后工作上下文超过目标窗口，原会话不变 |
 | 502 | <code>MCP_FAILED</code> | MCP 协议或连接异常 |
 | 502 | <code>MODEL_FAILED</code> | 未进入 SSE 流的模型网关异常，或上下文摘要 / Provider 状态投影失败 |
 | 200 SSE | <code>MODEL_FAILED</code> | 流内 error 帧 |

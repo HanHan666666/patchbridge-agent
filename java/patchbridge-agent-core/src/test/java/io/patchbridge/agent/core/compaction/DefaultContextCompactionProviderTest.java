@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.compaction;
 
+import io.patchbridge.agent.core.model.ModelTestTargets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -52,7 +53,7 @@ class DefaultContextCompactionProviderTest {
         RecordingProjector projector = new RecordingProjector();
         ContextCompactionRequest request = request(true, "上一份摘要");
         DefaultContextCompactionProvider provider =
-                new DefaultContextCompactionProvider(gateway, projector, testSettings());
+                new DefaultContextCompactionProvider(gateway, ModelTestTargets.router(projector, testSettings()));
 
         ContextCompactionResult result =
                 provider.compact(request, context()).result().toCompletableFuture().join();
@@ -61,7 +62,7 @@ class DefaultContextCompactionProviderTest {
         assertSame(usage, result.getUsage());
         assertEquals("projection-2", result.getModelState().getData());
         ModelRequest modelRequest = gateway.received.get();
-        assertNull(modelRequest.getModel(), "摘要必须沿用当前 Provider 默认模型");
+        assertEquals(ModelTestTargets.REF, modelRequest.getModelTarget());
         assertTrue(modelRequest.getTools().isEmpty(), "摘要调用不得开放 Tool");
         assertEquals("projection-1", modelRequest.getModelState().getData());
         assertEquals(
@@ -96,6 +97,7 @@ class DefaultContextCompactionProviderTest {
                 text("assistant-100", MessageRole.ASSISTANT, "第 100 次调用完成"),
                 text("assistant-final", MessageRole.ASSISTANT, "100/100 已全部完成"));
         ContextCompactionRequest request = new ContextCompactionRequest(
+                ModelTestTargets.REF,
                 ContextCompactionTrigger.MANUAL,
                 summarized,
                 retained,
@@ -111,7 +113,7 @@ class DefaultContextCompactionProviderTest {
                                 new ModelUsage(80L, 20L, 100L))));
         DefaultContextCompactionProvider provider =
                 new DefaultContextCompactionProvider(
-                        gateway, new RecordingProjector(), testSettings());
+                        gateway, ModelTestTargets.router(new RecordingProjector(), testSettings()));
 
         provider.compact(request, context()).result().toCompletableFuture().join();
 
@@ -138,7 +140,7 @@ class DefaultContextCompactionProviderTest {
                         new RecordingGateway(
                                 new ImmediateInvocation(
                                         response("摘要", ModelStopReason.END_TURN, null))),
-                        projector, testSettings());
+                        ModelTestTargets.router(projector, testSettings()));
 
         CompletionException failure =
                 assertThrows(
@@ -163,7 +165,7 @@ class DefaultContextCompactionProviderTest {
                                                 "部分摘要",
                                                 ModelStopReason.MAX_TOKENS,
                                                 new ModelUsage(80L, 20L, 100L)))),
-                        projector, testSettings());
+                        ModelTestTargets.router(projector, testSettings()));
 
         CompletionException failure =
                 assertThrows(
@@ -181,8 +183,7 @@ class DefaultContextCompactionProviderTest {
         PendingInvocation invocation = new PendingInvocation();
         DefaultContextCompactionProvider provider =
                 new DefaultContextCompactionProvider(
-                        new RecordingGateway(invocation), new RecordingProjector(),
-                        testSettings());
+                        new RecordingGateway(invocation), ModelTestTargets.router(new RecordingProjector(), testSettings()));
         ContextCompactionInvocation compaction = provider.compact(request(false, null), context());
 
         compaction.cancel();
@@ -204,11 +205,12 @@ class DefaultContextCompactionProviderTest {
         ContextCompactionSettings settings =
                 new ContextCompactionSettings(1_000, 400, 100);
         DefaultContextCompactionProvider provider =
-                new DefaultContextCompactionProvider(gateway, projector, settings);
+                new DefaultContextCompactionProvider(gateway, ModelTestTargets.router(projector, settings));
         List<AgentMessage> summarized = Arrays.asList(
                 text("user-old", MessageRole.USER, repeat("旧问题", 600)),
                 text("assistant-old", MessageRole.ASSISTANT, "旧答案"));
         ContextCompactionRequest request = new ContextCompactionRequest(
+                ModelTestTargets.REF,
                 ContextCompactionTrigger.AUTOMATIC,
                 summarized,
                 Collections.<AgentMessage>singletonList(
@@ -244,7 +246,7 @@ class DefaultContextCompactionProviderTest {
                                 new ModelUsage(80L, 20L, 100L))));
         DefaultContextCompactionProvider provider =
                 new DefaultContextCompactionProvider(
-                        gateway, new RecordingProjector(), testSettings());
+                        gateway, ModelTestTargets.router(new RecordingProjector(), testSettings()));
         List<AgentMessage> summarized = Arrays.asList(
                 text("user-old", MessageRole.USER, "旧问题"),
                 new AgentMessage(
@@ -256,6 +258,7 @@ class DefaultContextCompactionProviderTest {
         List<AgentMessage> retained = Collections.<AgentMessage>singletonList(
                 text("assistant-recent", MessageRole.ASSISTANT, "近期答案"));
         ContextCompactionRequest request = new ContextCompactionRequest(
+                ModelTestTargets.REF,
                 ContextCompactionTrigger.MANUAL,
                 summarized,
                 retained,
@@ -288,7 +291,7 @@ class DefaultContextCompactionProviderTest {
         ContextCompactionSettings settings =
                 new ContextCompactionSettings(1_000, 400, 100);
         DefaultContextCompactionProvider provider =
-                new DefaultContextCompactionProvider(gateway, new RecordingProjector(), settings);
+                new DefaultContextCompactionProvider(gateway, ModelTestTargets.router(new RecordingProjector(), settings));
         List<AgentMessage> summarized = Arrays.asList(
                 text("user-old", MessageRole.USER, "旧问题"),
                 new AgentMessage(
@@ -297,6 +300,7 @@ class DefaultContextCompactionProviderTest {
                         Collections.<ContentBlock>singletonList(
                                 new ReasoningBlock(repeat("旧思考", 600)))));
         ContextCompactionRequest request = new ContextCompactionRequest(
+                ModelTestTargets.REF,
                 ContextCompactionTrigger.MANUAL,
                 summarized,
                 Collections.<AgentMessage>singletonList(
@@ -328,6 +332,7 @@ class DefaultContextCompactionProviderTest {
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("opaque", "state");
         return new ContextCompactionRequest(
+                ModelTestTargets.REF,
                 ContextCompactionTrigger.MANUAL,
                 summarized,
                 retained,

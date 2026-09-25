@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS agent_conversation (
     title           VARCHAR(256),
     revision        BIGINT NOT NULL DEFAULT 0,
     status          VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    model_target_json CLOB NOT NULL,
     model_context_json CLOB NOT NULL,
     created_at      TIMESTAMP NOT NULL,
     updated_at      TIMESTAMP NOT NULL

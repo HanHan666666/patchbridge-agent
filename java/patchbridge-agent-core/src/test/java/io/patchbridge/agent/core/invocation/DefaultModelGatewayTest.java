@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.invocation;
 
+import io.patchbridge.agent.core.model.ModelTestTargets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -87,7 +88,7 @@ class DefaultModelGatewayTest {
                     return () -> {};
                 };
         ModelInvocationPipeline pipeline =
-                new ModelInvocationPipeline(provider, Collections.singletonList(interceptor));
+                new ModelInvocationPipeline(ModelTestTargets.router(provider), Collections.singletonList(interceptor));
 
         new DefaultModelGateway(pipeline).invoke(request()).await(Duration.ofSeconds(1));
 
@@ -109,7 +110,7 @@ class DefaultModelGatewayTest {
         ModelRequest request =
                 new ModelRequest(
                         "response-1",
-                        null,
+                        ModelTestTargets.REF,
                         Collections.emptyList(),
                         Collections.singletonList(
                                 new ModelToolDefinition(
@@ -259,6 +260,7 @@ class DefaultModelGatewayTest {
     /** 创建只包含文本输入的最小请求。 */
     private static ModelRequest request() {
         return ModelRequests.builder()
+                .modelTarget(ModelTestTargets.REF)
                 .responseMessageId("response-1")
                 .userText("hello")
                 .build();
@@ -267,7 +269,7 @@ class DefaultModelGatewayTest {
     /** 创建不带拦截器和额外能力的默认 Gateway。 */
     private static DefaultModelGateway gateway(ModelProvider provider) {
         return new DefaultModelGateway(
-                new ModelInvocationPipeline(provider, Collections.emptyList()));
+                new ModelInvocationPipeline(ModelTestTargets.router(provider), Collections.emptyList()));
     }
 
     /** 发布一条协议完整的文本响应。 */

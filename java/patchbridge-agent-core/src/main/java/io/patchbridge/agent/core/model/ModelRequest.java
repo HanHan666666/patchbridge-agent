@@ -1,5 +1,6 @@
 package io.patchbridge.agent.core.model;
 
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -15,8 +16,8 @@ public final class ModelRequest {
     /** 本次模型响应将使用的稳定消息标识，用于关联不可见的模型连续状态。 */
     private final String responseMessageId;
 
-    /** 可选模型名称；为空时由 Provider 选择其服务端默认模型。 */
-    private final String model;
+    /** 服务端目录中的精确目标引用，不允许任意上游模型名称。 */
+    private final ModelTargetRef modelTarget;
 
     /** 发起本轮调用前已经稳定提交的领域消息。 */
     private final List<AgentMessage> messages;
@@ -36,7 +37,7 @@ public final class ModelRequest {
     /** 创建不可变模型请求。 */
     public ModelRequest(
             String responseMessageId,
-            String model,
+            ModelTargetRef modelTarget,
             List<AgentMessage> messages,
             List<ModelToolDefinition> tools,
             ModelState modelState,
@@ -55,7 +56,8 @@ public final class ModelRequest {
             throw new IllegalArgumentException("tools 不允许包含 null");
         }
         this.responseMessageId = responseMessageId;
-        this.model = model;
+        if (modelTarget == null) throw new IllegalArgumentException("modelTarget 不可为空");
+        this.modelTarget = modelTarget;
         this.messages = Collections.unmodifiableList(new ArrayList<AgentMessage>(messages));
         this.tools =
                 tools == null
@@ -71,9 +73,9 @@ public final class ModelRequest {
         return responseMessageId;
     }
 
-    /** 返回可选模型覆盖名。 */
-    public String getModel() {
-        return model;
+    /** 返回已明确选择的模型目标。 */
+    public ModelTargetRef getModelTarget() {
+        return modelTarget;
     }
 
     /** 返回不可变领域消息快照。 */

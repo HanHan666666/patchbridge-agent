@@ -1,5 +1,8 @@
 package io.patchbridge.agent.starter.model;
 
+import io.patchbridge.agent.core.compaction.ContextCompactionSettings;
+import io.patchbridge.agent.core.model.target.*;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -60,6 +63,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** 验证默认 Provider 的领域协议转换、reasoning 状态、错误与取消语义。 */
 class OpenAiCompatibleModelProviderTest {
+    /** 单一测试目标用于验证 Gateway 始终经过路由。 */
+    private static final ModelTargetRef REF = new ModelTargetRef("test-openai", 1);
     /** 测试 HTTP Server。 */
     private final MockWebServer server = new MockWebServer();
 
@@ -133,7 +138,7 @@ class OpenAiCompatibleModelProviderTest {
         ModelRequest request = simpleRequest();
         DefaultModelGateway gateway =
                 new DefaultModelGateway(
-                        new ModelInvocationPipeline(provider(), Collections.emptyList()));
+                        new ModelInvocationPipeline(router(provider()), Collections.emptyList()));
 
         ModelResponse response = gateway.invoke(request).await(Duration.ofSeconds(3));
 
@@ -167,7 +172,7 @@ class OpenAiCompatibleModelProviderTest {
         server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
         DefaultModelGateway gateway =
                 new DefaultModelGateway(
-                        new ModelInvocationPipeline(provider(), Collections.emptyList()));
+                        new ModelInvocationPipeline(router(provider()), Collections.emptyList()));
 
         ModelInvocation invocation = gateway.invoke(simpleRequest());
         assertNotNull(server.takeRequest(2, TimeUnit.SECONDS));
@@ -197,7 +202,7 @@ class OpenAiCompatibleModelProviderTest {
         ModelRequest request =
                 new ModelRequest(
                         source.getResponseMessageId(),
-                        source.getModel(),
+                        source.getModelTarget(),
                         source.getMessages(),
                         source.getTools(),
                         new ModelState("anthropic-thinking/v1", Collections.singletonMap("x", "y")),
@@ -349,7 +354,7 @@ class OpenAiCompatibleModelProviderTest {
 
     /** 创建指向本地测试 Server 的 Provider。 */
     private OpenAiCompatibleModelProvider provider() {
-        PatchBridgeAgentProperties.Model config = new PatchBridgeAgentProperties.Model();
+        PatchBridgeAgentProperties.Target config = new PatchBridgeAgentProperties.Target();
         config.setBaseUrl(server.url("/v1").toString());
         config.setModel("test-model");
         config.setApiKey("test-key");
@@ -393,10 +398,10 @@ class OpenAiCompatibleModelProviderTest {
             "not a url"
         };
         for (String baseUrl : illegal) {
-            PatchBridgeAgentProperties.Model config = new PatchBridgeAgentProperties.Model();
+            PatchBridgeAgentProperties.Target config = new PatchBridgeAgentProperties.Target();
             config.setBaseUrl(baseUrl);
             config.setModel("test-model");
-            assertThrows(IllegalStateException.class,
+            assertThrows(IllegalArgumentException.class,
                     () -> new OpenAiCompatibleModelProvider(config),
                     "应当拒绝 base-url: " + baseUrl);
         }
@@ -405,7 +410,7 @@ class OpenAiCompatibleModelProviderTest {
     /** 尾斜杠与大小写不影响固定 chat/completions 地址的推导。 */
     @Test
     void trailingSlashesAreNormalizedForCompletionsUrl() {
-        PatchBridgeAgentProperties.Model config = new PatchBridgeAgentProperties.Model();
+        PatchBridgeAgentProperties.Target config = new PatchBridgeAgentProperties.Target();
         config.setBaseUrl("https://api.example.test/v1///");
         config.setModel("test-model");
 
@@ -413,6 +418,14 @@ class OpenAiCompatibleModelProviderTest {
 
         // 仅验证构造成功；URL 已在构造期固定，无需发起网络请求
         assertNotNull(provider);
+    }
+
+    /** Gateway 的协议测试保留真实 Router 能力校验。 */
+    private static ModelProviderRouter router(OpenAiCompatibleModelProvider provider) {
+        ResolvedModelTarget target = new ResolvedModelTarget(REF, "测试 OpenAI", "openai-chat-completions",
+                true, true, true, new ContextCompactionSettings(128000, 20000, 12800), provider);
+        return new ModelProviderRouter(new ImmutableModelTargetCatalog(
+                Collections.singletonList(target), REF), (access, selected) -> true);
     }
 
     /** 创建含历史工具调用及其精确 reasoning 状态的请求。 */
@@ -443,7 +456,7 @@ class OpenAiCompatibleModelProviderTest {
                         Collections.<String, Object>singletonMap("type", "object"));
         return new ModelRequest(
                 "response-2",
-                null,
+                REF,
                 Arrays.asList(user, assistant),
                 Collections.singletonList(tool),
                 new ModelState(OpenAiChatProtocol.STATE_FORMAT, data),
@@ -460,7 +473,7 @@ class OpenAiCompatibleModelProviderTest {
                         Collections.<ContentBlock>singletonList(new TextBlock("hi")));
         return new ModelRequest(
                 "response-1",
-                null,
+                REF,
                 Collections.singletonList(user),
                 Collections.emptyList(),
                 null,

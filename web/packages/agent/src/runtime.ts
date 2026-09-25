@@ -526,6 +526,7 @@ class DefaultAgentExecution implements AgentExecution {
       this.requireWithinDeadline();
       const pendingConversation = {
         messages: this.workingMessages,
+        modelTarget: this.input.conversation.modelTarget,
         modelContext: this.stableModelContext,
       };
       const requiresCompaction = this.contextManager.requiresAutomaticCompaction(
@@ -594,6 +595,7 @@ class DefaultAgentExecution implements AgentExecution {
         this.contextManager.recordModelResponse(
           {
             messages: this.workingMessages,
+            modelTarget: this.input.conversation.modelTarget,
             modelContext: this.stableModelContext,
           },
           assistantMessage,
@@ -668,6 +670,7 @@ class DefaultAgentExecution implements AgentExecution {
     let firstTokenAt: number | null = null;
     let modelCallCompletedAt: number | null = null;
     const request: ModelRequest = {
+      modelTarget: Object.freeze({ ...this.input.conversation.modelTarget }),
       // Model 可能异步消费请求；必须切断 Runtime 后续 push 对已发请求的反向修改。
       messages: Object.freeze([...messages]),
       modelState,
@@ -1266,7 +1269,7 @@ function copyAndFreezeToolDefinition(tool: ToolDefinition): ToolDefinition {
 }
 
 /** ToolRegistrySnapshot 的公开定义映射成最小 Model Tool 端口。 */
-function toModelTools(tools: readonly ToolDefinition[]): readonly ModelToolDefinition[] {
+export function toModelTools(tools: readonly ToolDefinition[]): readonly ModelToolDefinition[] {
   return Object.freeze(tools.map(tool => Object.freeze({
     name: tool.name,
     description: tool.description,

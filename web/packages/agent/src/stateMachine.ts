@@ -15,6 +15,8 @@ import type {
   Conversation,
   ConversationContext,
   ModelContext,
+  ModelTarget,
+  ModelTargetRef,
   PendingConfirmation,
 } from './types';
 import {
@@ -24,6 +26,19 @@ import {
 
 /** AgentState 可以接受的领域事件；每种事件只表达一个明确的业务事实。 */
 export type AgentStateEvent =
+  | {
+      /** 初始化或刷新得到的权限过滤目录。 */
+      readonly type: 'MODEL_TARGETS_LOADED';
+      readonly targets: readonly ModelTarget[];
+      readonly defaultTarget: ModelTargetRef | null;
+    }
+  | {
+      /** 目标切换已经在服务端完整预检或原子保存成功。 */
+      readonly type: 'MODEL_TARGET_SWITCHED';
+      readonly context: ConversationContext;
+      readonly conversation: Conversation | null;
+      readonly configuration: ContextCompactionConfiguration;
+    }
   | {
       /** 初始化阶段已经取得服务端模型窗口配置。 */
       readonly type: 'CONTEXT_CONFIGURATION_LOADED';
@@ -189,6 +204,9 @@ export function createInitialAgentState(): AgentState {
     status: 'idle',
     conversation: null,
     conversations: [],
+    modelTargets: [],
+    defaultModelTarget: null,
+    modelTarget: null,
     messages: [],
     modelContext: EMPTY_MODEL_CONTEXT,
     contextConfiguration: null,
@@ -216,6 +234,24 @@ export function reduceAgentState(
   event: AgentStateEvent,
 ): AgentState {
   switch (event.type) {
+    case 'MODEL_TARGETS_LOADED':
+      return copyState(state, {
+        modelTargets: event.targets,
+        defaultModelTarget: event.defaultTarget,
+        modelTarget: state.modelTarget ?? event.defaultTarget,
+      });
+    case 'MODEL_TARGET_SWITCHED':
+      return copyState(state, {
+        status: 'done',
+        modelTarget: event.context.modelTarget,
+        contextConfiguration: event.configuration,
+        messages: event.context.messages,
+        modelContext: event.context.modelContext,
+        conversation: event.conversation,
+        conversations: event.conversation == null ? state.conversations
+          : upsertConversation(state.conversations, event.conversation),
+        error: null,
+      });
     case 'CONVERSATIONS_LOADING_STARTED':
       return copyState(state, {
         status: 'loading-conversations',
@@ -251,6 +287,7 @@ export function reduceAgentState(
         status: 'done',
         conversation: event.conversation,
         messages: event.context.messages,
+        modelTarget: event.context.modelTarget,
         modelContext: event.context.modelContext,
         runOutcome: null,
       });
@@ -258,6 +295,11 @@ export function reduceAgentState(
       return copyState(state, {
         status: 'idle',
         conversation: null,
+        modelTarget: state.defaultModelTarget,
+        contextConfiguration: state.modelTargets.find(target =>
+          target.ref.targetId === state.defaultModelTarget?.targetId
+          && target.ref.routingRevision === state.defaultModelTarget?.routingRevision,
+        )?.configuration ?? null,
         messages: [],
         modelContext: EMPTY_MODEL_CONTEXT,
         streamingAssistant: null,
@@ -275,6 +317,11 @@ export function reduceAgentState(
       return copyState(state, {
         status: 'idle',
         conversation: null,
+        modelTarget: state.defaultModelTarget,
+        contextConfiguration: state.modelTargets.find(target =>
+          target.ref.targetId === state.defaultModelTarget?.targetId
+          && target.ref.routingRevision === state.defaultModelTarget?.routingRevision,
+        )?.configuration ?? null,
         conversations,
         messages: [],
         modelContext: EMPTY_MODEL_CONTEXT,
@@ -396,6 +443,7 @@ function copyState(state: AgentState, changes: AgentStateChanges): AgentState {
   return {
     ...next,
     conversations: [...next.conversations],
+    modelTargets: [...next.modelTargets],
     messages: [...next.messages],
     contextWindow: inspectContextWindow(
       conversation,

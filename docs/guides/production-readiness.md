@@ -127,9 +127,9 @@ Audit 默认 enabled，默认 payload-mode=metadata-only。full 模式也先经�
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
-| 启动提示 model base-url/model 未配置 | 使用默认 Provider 但缺配置 | 注入两个值或提供自定义 ModelProvider |
+| 启动时目标配置不完整 | `models.targets` 缺少协议、窗口、能力或上游模型 | 补齐该目标的必填字段，或由宿主整体替换 `ModelTargetCatalog` |
 | 启动提示 context-window-tokens 未配置 | 缺少模型窗口硬配置 | 注入所选模型的真实上下文窗口；框架不按模型名猜测 |
-| 启动 WARN <code>PBA-CFG-001</code> | 默认 Provider 未配置 api-key，不会发送 Authorization | 目标网关需要认证时配置 <code>patchbridge-agent.model.api-key</code> |
+| 模型上游返回 401 | 目标凭据缺失、无效或账户无权限 | 核对 `models.targets.<id>.api-key` 的安全注入和上游授权；不要把密钥写进日志或仓库 |
 | 启动 WARN <code>PBA-CFG-002</code> | MCP 开启且默认 properties 源没有任何 Server | 配置 <code>patchbridge-agent.mcp.servers</code> 或显式关闭 MCP |
 | 启动 WARN <code>PBA-CFG-003</code> | 仍在使用默认仅认证 ToolAccessPolicy | 注册宿主策略映射 RBAC/ACL，或确认接受默认语义 |
 | 启动缺 CurrentUserProvider | 无 Spring Security 默认适配 | 提供宿主 CurrentUserProvider |

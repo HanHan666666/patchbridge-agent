@@ -22,6 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  */
 @SpringBootTest(classes = PatchBridgeAgentStarterIntegrationTest.TestApp.class,
         properties = {
+            "patchbridge-agent.models.default-target=fake-model",
+            "patchbridge-agent.models.targets.fake-model.display-name=测试模型",
+            "patchbridge-agent.models.targets.fake-model.protocol=openai-chat-completions",
+            "patchbridge-agent.models.targets.fake-model.routing-revision=1",
+            "patchbridge-agent.models.targets.fake-model.image-input=true",
+            "patchbridge-agent.models.targets.fake-model.tool-calling=true",
                 "spring.datasource.url=jdbc:h2:mem:mcpdisabledtest;DB_CLOSE_DELAY=-1",
                 "spring.datasource.driver-class-name=org.h2.Driver",
                 "spring.sql.init.mode=always",
@@ -29,9 +35,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
                 "patchbridge-agent.mcp.enabled=false",
                 "patchbridge-agent.mcp.source=jdbc",
                 // 模型网关默认 Provider 是硬依赖，与本测试的 MCP 边界无关
-                "patchbridge-agent.model.base-url=http://localhost:0/v1",
-                "patchbridge-agent.model.model=fake-model",
-                "patchbridge-agent.model.context-window-tokens=128000"
+                "patchbridge-agent.models.targets.fake-model.base-url=http://localhost:0/v1",
+                "patchbridge-agent.models.targets.fake-model.model=fake-model",
+                "patchbridge-agent.models.targets.fake-model.context-window-tokens=128000"
         })
 class McpDisabledAutoConfigurationIntegrationTest {
 

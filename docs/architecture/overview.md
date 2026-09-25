@@ -60,7 +60,7 @@ SSE 连接、`ModelCall` 取消句柄和一次 HTTP 请求的上下文属于短�
 - 会话归属由宿主 `ConversationOwnerResolver` 定义；
 - Tool 权限由宿主 `ToolAccessPolicy` 定义并在每次调用时重新检查；
 - Admin 权限由宿主 `AdminAccessPolicy` 定义；
-- 企业可以替换 `ModelProvider`、`ConversationRepository`、`AuditSink`、MCP 存储与加密；
+- 企业可以整体替换 `ModelTargetCatalog`、`ModelAccessPolicy`、`ConversationRepository`、`AuditSink`、MCP 存储与加密；
 - Browser 可以注入统一 `HttpTransport`，复用既有 Cookie、Bearer、CSRF 和刷新链；
 - UI 可以使用可选 Widget，也可以只使用 Headless Agent 自行渲染。
 
@@ -275,7 +275,7 @@ Repository 不提供分别保存消息与工作上下文的方法，避免产生
 操作，当前没有对应的重置入口。计划契约要求 Repository 在 owner 范围和
 `expectedRevision` 下原子保留消息、将 `modelContext.modelState` 设为 `null`、推进 revision
 并返回完整快照；即使状态原本已空也推进 revision，使迟到 Execution 或其他 Tab 的旧保存
-明确冲突。该操作不选择 Provider。按会话路由另见 Proposed
+明确冲突。该操作不选择 Provider。当前按会话路由与显式 handoff 见 Accepted
 [ADR-005](adr/0005-model-target-routing-and-switching.md)，实施状态均以[路线图](../roadmap.md)为准。
 
 上下文压缩不属于显式状态重置。`DefaultContextManager` 负责 80% 阈值、安全消息段、重复
@@ -405,6 +405,10 @@ Registry 是动态能力目录，Execution 是稳定执行单元。如果 Runtim
 动态 Registry，模型看到的定义可能已经被替换或删除。Snapshot 把动态发现和稳定执行分开，
 既支持页面 Tool / WebMCP 热更新，也保证本轮行为可解释。
 
+## 模型目标与会话路由
+
+默认 Starter 从 `patchbridge-agent.models` 创建不可变目录；`ModelTargetRef { targetId, routingRevision }` 是 Browser、压缩、Java Gateway 和持久化 Context 共有的路由身份。Router 统一检查目标存在、启用、修订和授权，再交给目标绑定的协议 Adapter。目标不可用时明确失败，不沿用默认目标。完整历史、当前目标和模型工作上下文在同一会话 revision 下原子保存；显式 handoff 保留历史、清除旧私有状态并为新窗口重估，普通保存不能更改目标。模型目录只经部署配置或宿主完整替换 Catalog 管理，当前没有在线模型后台。决策见[ADR-005](adr/0005-model-target-routing-and-switching.md)。
+
 ## Provider 协议边界
 
 Browser 与 Java Core 只使用结构化事件：
@@ -416,7 +420,7 @@ Browser 与 Java Core 只使用结构化事件：
 - 流内标准 `error`。
 
 OpenAI Chat 的 `choices`、`tool_calls`、`reasoning_content` 和 `[DONE]` 只能存在于对应
-Provider Adapter。Provider 负责：
+Provider Adapter；Anthropic Messages 的具名 SSE、`thinking` 签名与工具别名也只在其协议内核和私有 `ModelState` 中。Provider 负责：
 
 1. 编码目标厂商请求；
 2. 剥离框架消息 ID；
@@ -426,8 +430,7 @@ Provider Adapter。Provider 负责：
 6. 把网络和协议错误转换成框架错误；
 7. 提供幂等取消句柄。
 
-若增加新的模型协议，新增 Adapter 和独立 `ModelState.format`，不在 Runtime 内增加厂商
-条件分支。
+当前 OpenAI Chat 与 Anthropic Messages 通过同一 `ModelProviderRouter` 绑定各自 Adapter。若增加新的模型协议，新增 Adapter 和独立 `ModelState.format`，不在 Runtime 内增加厂商条件分支。
 
 Provider 契约使用仓库级
 [`model-provider-contract-v1.json`](../../test-fixtures/model-provider-contract-v1.json) 共享可跨语言表达的标准结构事件序列。
@@ -468,7 +471,7 @@ Browser Agent Loop 仍是唯一编排者。
 
 | 需求 | 正确扩展点 | 不应该修改 |
 | --- | --- | --- |
-| 接入新模型厂商 | 新 `ModelProvider` Adapter + 状态格式 | Agent Runtime、Controller、View |
+| 接入新模型协议 | 新 `ModelProtocolAdapterFactory` 与协议内核、状态格式 | Agent Runtime、Controller、View |
 | 自定义压缩状态投影 | Provider 的 `ModelStateProjector` / `ContextCompactionProvider` | Browser 按 format 读取或清空私有状态 |
 | Java Service 单次调用模型 | 注入 `ModelGateway`，按需显式传入 `AiRequestContext` | 反向请求 Browser SSE、在框架内增加业务 Repository |
 | 复用企业 HTTP 安全链 | `HttpTransport` | 三个 Http Client 各写一套鉴权 |
@@ -564,7 +567,7 @@ Browser 持有 Agent Loop、当前 Execution、流式临时状态和 Human-in-th
 | 责任 | 框架 | 宿主应用 | 基础设施 |
 | --- | --- | --- | --- |
 | Agent Loop 和状态机 | Browser Runtime | 选择 Widget 或自定义 View | 浏览器生命周期 |
-| 模型协议适配 | 默认 OpenAI-compatible Provider | 可替换 <code>ModelProvider</code> | 模型 endpoint、配额和可用性 |
+| 模型目录与协议适配 | YAML 唯一部署目录、统一 Router、OpenAI Chat 与 Anthropic Messages Adapter | 可整体替换 <code>ModelTargetCatalog</code> / <code>ModelAccessPolicy</code> | 模型 endpoint、凭据、配额和可用性 |
 | 身份 | <code>CurrentUserProvider</code> Port | 从现有认证系统解析可信用户 | SSO、Session、JWT 生命周期 |
 | Tool 权限 | 每次调用执行 <code>canInvoke</code> | 定义 RBAC/ABAC 语义和业务 ACL | 网关/WAF/Rate Limit |
 | 会话归属 | owner 等值隔离 | 多租户 owner key 规则 | 数据库备份和访问控制 |
@@ -580,6 +583,7 @@ Browser 持有 Agent Loop、当前 Execution、流式临时状态和 Human-in-th
 | <code>patchbridge-agent-annotations</code> | 零 Spring 依赖的 <code>@AiTool</code>/<code>@AiParam</code> |
 | <code>patchbridge-agent-core</code> | 领域模型、Port、调用管线和不变量 |
 | <code>patchbridge-agent-model-openai</code> | OpenAI Chat 协议内核，OkHttp / WebFlux Adapter 共用 |
+| <code>patchbridge-agent-model-anthropic</code> | Anthropic Messages 协议内核与私有思考状态 |
 | <code>patchbridge-agent-model-webflux</code> | 可选 WebFlux <code>ModelProvider</code> Adapter，不自动装配 |
 | <code>patchbridge-agent-storage-jdbc</code> | Conversation、Audit、MCP JDBC Adapter 和 H2/MySQL schema |
 | <code>patchbridge-agent-mcp</code> | Global MCP 配置应用服务、Streamable HTTP Client 和 Tool Provider |

@@ -11,10 +11,12 @@
 | <code>GET /ai/tools</code> | 200 | 当前用户可发现 Tool，含定义/路由版本引用 |
 | <code>POST /ai/tools/call</code> | 200 | 每次重新授权；业务 isError 仍可为 200；版本引用必须与当前定义一致 |
 | <code>POST /ai/model/stream</code> | 200 SSE | 结构化模型流 |
-| <code>GET /ai/model/config</code> | 200 | 当前模型窗口、固定 80% 自动阈值、近期保留预算与输出预留 |
+| <code>GET /ai/model/targets</code> | 200 | 当前身份可用的脱敏目标目录、各目标窗口和默认引用 |
+| <code>POST /ai/model/handoff</code> | 200 | 草稿目标切换预检，返回完整候选 Context，不保存 |
+| <code>POST /ai/conversations/{id}/model-target</code> | 200 | 根据服务端历史与 revision 原子切换已保存会话 |
 | <code>POST /ai/model/compact</code> | 200 | 用当前模型原子生成上下文摘要并投影 Provider 状态 |
 | <code>GET /ai/conversations</code> | 200 | 当前 owner 会话列表 |
-| <code>POST /ai/conversations</code> | 200 | 无 body 合法；不是 201 |
+| <code>POST /ai/conversations</code> | 200 | 必须携带首轮完整 Context；目标与消息原子创建 |
 | <code>GET /ai/conversations/{id}</code> | 200 | 会话元数据与完整 Context |
 | <code>PUT /ai/conversations/{id}</code> | 200 | revision + 完整 Context 原子替换 |
 | <code>DELETE /ai/conversations/{id}</code> | 204 | 幂等删除；不存在也返回 204 |
@@ -59,7 +61,7 @@ name 和 arguments 必填；即使无参数也必须显式发送 <code>{}</code>
 
 ### Conversation 请求
 
-创建请求只允许可选 title，最大 256 字符。保存请求必须包含：
+创建请求必须包含完整 `context`，可选 title（最大 256 字符）；无 body 返回 400。保存请求必须包含：
 
 ~~~json
 {
@@ -67,6 +69,7 @@ name 和 arguments 必填；即使无参数也必须显式发送 <code>{}</code>
   "revision": 0,
   "context": {
     "messages": [],
+    "modelTarget": {"targetId": "deepseek-anthropic", "routingRevision": 1},
     "modelContext": {
       "checkpoint": null,
       "firstRetainedMessageId": null,
@@ -88,23 +91,13 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 - 每个 `tool-result` 必须包含 `execution`：`completed/not-executed/unknown/result-omitted`，后三种必须同时使用 `status: error`。保存和加载原样保留执行事实，不推断提示文案；缺失字段按当前严格契约拒绝。
 
 
-### Model config
+### 模型目录与 handoff
 
-`GET /ai/model/config` 的成功响应精确为：
+`GET /ai/model/targets` 返回 `targets` 数组和 `defaultTarget` 引用或 null。每个目标仅包含 `ref`、`displayName`、`protocol`、`imageInput`、`toolCalling`、`configuration`；`configuration` 精确包含 `contextWindowTokens`、`automaticThresholdTokens`、`keepRecentTokens`、`reservedOutputTokens`。目录按当前认证身份过滤，不公开 endpoint、上游模型或凭据。旧 `/model/config` 已删除。
 
-~~~json
-{
-  "contextWindowTokens": 128000,
-  "automaticThresholdTokens": 102400,
-  "keepRecentTokens": 20000,
-  "reservedOutputTokens": 12800
-}
-~~~
+草稿切换 `POST /ai/model/handoff` 请求为 `{ "context": <完整 ConversationContext>, "target": <ModelTargetRef>, "tools": [] }`，返回 `{ "context": <完整候选 Context> }`。保存会话切换 `POST /ai/conversations/{id}/model-target` 请求为 `{ "revision": 3, "target": <ModelTargetRef>, "tools": [] }`，返回 `{ "conversation": <新元数据>, "context": <完整候选 Context> }`。保存路径从服务端读取原历史并以 revision 原子提交；请求不接受客户端 context。两个路径均保留完整消息与文本 checkpoint，清除旧私有状态，按新目标重估，失败不改变原会话。
 
-四个字段都是安全正整数；自动阈值严格小于窗口，近期预算严格小于自动阈值，输出预留与
-自动阈值之和严格小于窗口。`reservedOutputTokens` 是最终输入预算（窗口 − 输出预留）的
-唯一来源：Browser 的最终窗口检查与服务端摘要请求预算都使用该派生值，任何一层不得
-另行推导。Browser 初始化时必须取得该配置，不维护另一份前端默认值。
+`ModelTargetRef` 精确为 `{ "targetId": "deepseek-anthropic", "routingRevision": 1 }`。模型流、摘要及 `ConversationContext.modelTarget` 必须携带同一引用；普通保存不得改变当前目标。目标禁用、修订过期或权限不足时返回明确错误，不转用默认目标。
 
 ### Context compact
 
@@ -115,6 +108,7 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
   "traceId": "trace-placeholder",
   "conversationId": "conversation-placeholder",
   "request": {
+    "modelTarget": {"targetId": "deepseek-anthropic", "routingRevision": 1},
     "trigger": "manual",
     "messagesToSummarize": [
       {
@@ -158,7 +152,7 @@ revision 必须为非负整数。冲突返回 <code>409 CONVERSATION_CONFLICT</c
 }
 ~~~
 
-服务端固定使用当前模型，不接受 Browser 传模型名，不向摘要调用提供 Tool。摘要请求本身
+服务端按请求中的 `modelTarget` 精确解析；保存会话还核对其当前目标，不接受 Browser 传任意模型名，不向摘要调用提供 Tool。摘要请求本身
 遵守与普通请求相同的窗口预算：摘要输入（含淘汰前缀、保留尾部与固定指令）加输出预留
 超过窗口时在调用模型前明确失败，返回 <code>413 CONTEXT_WINDOW_EXCEEDED</code>（重试
 同样的请求必然再次失败，必须调整输入）。摘要空白、意外 `tool-use`、`max-tokens`、缺少
@@ -168,7 +162,9 @@ usage、Provider 状态投影失败或上游失败返回明确错误；不会返
 
 ### Model stream 请求
 
-request 必须显式包含 responseMessageId、非空 messages、tools 和 modelState。tools 可以是空数组，modelState 可以是显式 null，但两个字段都不能缺失。maxTokens 如提供必须大于 0。
+request 必须显式包含 modelTarget、responseMessageId、非空 messages、tools 和 modelState。tools 可以是空数组，modelState 可以是显式 null，但两个字段都不能缺失。maxTokens 如提供必须大于 0。
+
+Anthropic Messages 目标把项目内 Tool 全名映射成最长 64 字符的协议别名；流式工具调用在服务端恢复为原名，Browser 和 Tool 执行层只处理项目内的全名。别名仅在本次请求的工具定义快照中有效。
 
 ### SSE 事件
 

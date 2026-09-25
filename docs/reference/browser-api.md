@@ -32,6 +32,7 @@ subscribe 注册后立即推送当前不可变快照。View 只调用 Controller
 - <code>getState()/subscribe()</code>；
 - <code>initialize()/refreshConversations()/loadConversation()</code>；
 - <code>startNewConversation()/deleteConversation()</code>；
+- <code>switchModelTarget(targetId)</code>：仅空闲时显式切换，草稿做服务端预检，保存会话使用 revision 原子提交；
 - <code>sendMessage(text, images)</code>；
 - <code>compactContext()</code>：仅空闲、有 usage 且存在安全历史前缀时手动压缩；
 - <code>approveTool()/rejectTool()/abort()/dispose()</code>；
@@ -61,6 +62,7 @@ Navigation 和 Run 使用独立取消与 generation；旧请求、旧 Execution 
 | <code>toolClient</code> | 替换后端 Tool Client |
 | <code>toolRegistry</code> | 完整替换 Registry；不能与 toolClient 同时提供 |
 | <code>conversationClient</code> | 替换会话 Client |
+| <code>modelTargetClient</code> | 替换目标目录与 handoff HTTP Client；授权和一致性仍由服务端控制 |
 | <code>contextCompactionGateway</code> | 替换模型配置与压缩 HTTP Adapter；自动与手动路径仍共享默认 ContextManager |
 | <code>storageKey</code> | 上次会话 localStorage key；默认 <code>patchbridge-agent:last-conversation</code> |
 | <code>callTrace</code> | 调用轨迹采集配置；缺省不采集（不创建采集 Hook、不访问 localStorage）。<code>{ mode: 'memory' }</code> 仅当前页内存；<code>{ mode: 'persistent' }</code> 终态写入 localStorage，可用 <code>storageKey</code> 指定键前缀（默认 <code>patchbridge-agent:call-trace</code>） |
@@ -72,8 +74,9 @@ Navigation 和 Run 使用独立取消与 generation；旧请求、旧 Execution 
 `AgentState` 始终包含：
 
 - `messages`：完整可见历史，压缩不删除；
+- `modelTarget`：当前会话的精确目标引用；`modelTargets`：当前身份可用的脱敏目录；
 - `modelContext`：检查点、第一条保留消息引用、Provider 私有状态和当前 usage；
-- `contextConfiguration`：服务端窗口、80% 阈值和近期预算，初始化前为 `null`；
+- `contextConfiguration`：当前目标的服务端窗口、80% 阈值和近期预算，初始化前为 `null`；
 - `contextWindow`：`currentTokens/source/percentage/compactable` 的 View 投影；
 - `status='compacting-context'`：自动或手动摘要正在执行。
 

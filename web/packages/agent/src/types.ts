@@ -213,6 +213,22 @@ export interface ModelState {
   readonly data: JsonValue;
 }
 
+/** 部署目录中的稳定模型目标身份；修订变化必须由用户显式切换。 */
+export interface ModelTargetRef {
+  readonly targetId: string;
+  readonly routingRevision: number;
+}
+
+/** 当前用户可用的模型目标及其公开能力、窗口预算。 */
+export interface ModelTarget {
+  readonly ref: ModelTargetRef;
+  readonly displayName: string;
+  readonly protocol: string;
+  readonly imageInput: boolean;
+  readonly toolCalling: boolean;
+  readonly configuration: ContextCompactionConfiguration;
+}
+
 /** 上下文压缩来源；自动阈值与用户主动操作需要在审计和界面中明确区分。 */
 export type ContextCompactionTrigger = 'automatic' | 'manual';
 
@@ -296,6 +312,8 @@ export interface ContextWindowState {
 export interface ConversationContext {
   /** 始终完整保留、可展示且可持久化的稳定消息。 */
   readonly messages: readonly AgentMessage[];
+  /** 当前会话显式选用的目录目标。 */
+  readonly modelTarget: ModelTargetRef;
   /** 可独立压缩的模型工作上下文。 */
   readonly modelContext: ModelContext;
 }
@@ -403,6 +421,12 @@ export interface AgentState {
   readonly conversation: Conversation | null;
   /** 当前用户可见的会话元数据列表。 */
   readonly conversations: readonly Conversation[];
+  /** 服务端按当前用户权限过滤后的可用目标。 */
+  readonly modelTargets: readonly ModelTarget[];
+  /** 当前身份可用的部署默认目标；没有权限时为 null。 */
+  readonly defaultModelTarget: ModelTargetRef | null;
+  /** 草稿或已保存会话当前选中的目标。 */
+  readonly modelTarget: ModelTargetRef | null;
   /** 当前会话已经稳定提交的完整消息。 */
   readonly messages: readonly AgentMessage[];
   /** 与完整聊天历史分离、可独立压缩的模型工作上下文。 */

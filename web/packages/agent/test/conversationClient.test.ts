@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { HttpConversationClient } from '../src/clients/conversationClient';
 import type { HttpTransport } from '../src/clients/http';
-import { testModelContext } from './testContext';
+import { TEST_TARGET, testModelContext } from './testContext';
 
 /** 返回固定 JSON 文本的桩传输层。 */
 function transportWith(body: unknown): HttpTransport {
@@ -58,29 +58,30 @@ describe('HttpConversationClient 响应边界校验', () => {
 
   it('create/save 返回的会话对象同样强制校验', async () => {
     const bad = new HttpConversationClient('/ai', transportWith({ conversation: { title: 'x' } }));
-    await expect(bad.create('x')).rejects.toThrow('conversationId');
+    await expect(bad.create('x', { messages: [], modelTarget: TEST_TARGET, modelContext: testModelContext() })).rejects.toThrow('conversationId');
     await expect(bad.save('conv-1', {
       title: 'x',
       revision: 0,
-      context: { messages: [], modelContext: testModelContext() },
+      context: { messages: [], modelTarget: TEST_TARGET, modelContext: testModelContext() },
     })).rejects.toThrow('conversationId');
   });
 
   it('get 的 context.messages 与 modelContext 形状强制校验', async () => {
     const badMessages = new HttpConversationClient('/ai', transportWith({
       conversation: validConversation(),
-      context: { messages: 'oops', modelContext: testModelContext() },
+      context: { messages: 'oops', modelTarget: TEST_TARGET, modelContext: testModelContext() },
     }));
     await expect(badMessages.get('conv-1')).rejects.toThrow('context.messages');
 
     const badState = new HttpConversationClient('/ai', transportWith({
       conversation: validConversation(),
-      context: { messages: [], modelContext: 'opaque' },
+      context: { messages: [], modelTarget: TEST_TARGET, modelContext: 'opaque' },
     }));
     await expect(badState.get('conv-1')).rejects.toThrow('context.modelContext');
   });
   it('会话 HTTP 恢复保留执行事实与目录基线，旧字段缺失或非法值明确失败', async () => {
     const context = {
+      modelTarget: TEST_TARGET,
       messages: [{ id: 'tool-1', role: 'tool', blocks: [{
         type: 'tool-result', callId: 'call-1', name: 'local.query', status: 'error',
         execution: 'unknown', content: [{ type: 'text', text: '中止' }],

@@ -44,6 +44,7 @@ export function snapshotConversationContext(
 ): ConversationContext {
   return Object.freeze({
     messages: Object.freeze(context.messages.map(snapshotAgentMessage)),
+    modelTarget: Object.freeze({ ...context.modelTarget }),
     modelContext: snapshotModelContext(context.modelContext),
   });
 }

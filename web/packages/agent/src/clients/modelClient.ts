@@ -11,6 +11,7 @@ import type {
   AgentMessage,
   JsonObject,
   ModelState,
+  ModelTargetRef,
 } from '../types';
 import {
   defaultHttpTransport,
@@ -32,8 +33,8 @@ export interface ModelToolDefinition {
 
 /** 一次厂商中立模型请求。 */
 export interface ModelRequest {
-  /** 宿主显式覆盖的模型标识；null 表示使用服务端 Provider 配置。 */
-  model?: string | null;
+  /** 本轮冻结的目标身份，服务端精确检查修订和权限。 */
+  modelTarget: ModelTargetRef;
   /** 当前执行可见的完整稳定消息历史。 */
   messages: readonly AgentMessage[];
   /** 当前历史对应的 Provider 续接状态。 */

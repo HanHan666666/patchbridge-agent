@@ -7,6 +7,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HttpContextCompactionGateway } from '../src/clients/contextCompactionClient';
 import type { HttpTransport } from '../src/clients/http';
+import { TEST_TARGET } from './testContext';
+
+/** 服务端目录里的当前目标窗口。 */
+function catalog(configuration: unknown): unknown {
+  return { targets: [{ ref: TEST_TARGET, configuration }] };
+}
 
 /** 返回固定 JSON 并可观察请求的测试传输。 */
 function transportWith(body: unknown): HttpTransport & { request: ReturnType<typeof vi.fn> } {
@@ -20,21 +26,21 @@ function transportWith(body: unknown): HttpTransport & { request: ReturnType<typ
 
 describe('HttpContextCompactionGateway', () => {
   it('读取服务端唯一窗口配置并校验 80% 派生值的边界关系', async () => {
-    const transport = transportWith({
+    const transport = transportWith(catalog({
       contextWindowTokens: 128_000,
       automaticThresholdTokens: 102_400,
       keepRecentTokens: 20_000,
       reservedOutputTokens: 12_800,
-    });
+    }));
     const gateway = new HttpContextCompactionGateway('/ai/', transport);
 
-    await expect(gateway.configuration()).resolves.toEqual({
+    await expect(gateway.configuration(TEST_TARGET)).resolves.toEqual({
       contextWindowTokens: 128_000,
       automaticThresholdTokens: 102_400,
       keepRecentTokens: 20_000,
       reservedOutputTokens: 12_800,
     });
-    expect(transport.request).toHaveBeenCalledWith('/ai/model/config',
+    expect(transport.request).toHaveBeenCalledWith('/ai/model/targets',
       expect.objectContaining({ method: 'GET' }));
   });
 
@@ -61,8 +67,8 @@ describe('HttpContextCompactionGateway', () => {
     ];
 
     for (const body of invalidBodies) {
-      const gateway = new HttpContextCompactionGateway('/ai', transportWith(body));
-      await expect(gateway.configuration(), JSON.stringify(body)).rejects.toThrow();
+      const gateway = new HttpContextCompactionGateway('/ai', transportWith(catalog(body)));
+      await expect(gateway.configuration(TEST_TARGET), JSON.stringify(body)).rejects.toThrow();
     }
   });
 
@@ -76,6 +82,7 @@ describe('HttpContextCompactionGateway', () => {
     const abortController = new AbortController();
 
     await expect(gateway.compact({
+      modelTarget: TEST_TARGET,
       trigger: 'manual',
       messagesToSummarize: [],
       retainedMessages: [],

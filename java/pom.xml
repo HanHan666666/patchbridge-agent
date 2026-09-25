@@ -32,6 +32,7 @@
         <module>patchbridge-agent-annotations</module>
         <module>patchbridge-agent-core</module>
         <module>patchbridge-agent-model-openai</module>
+        <module>patchbridge-agent-model-anthropic</module>
         <module>patchbridge-agent-model-webflux</module>
         <module>patchbridge-agent-storage-jdbc</module>
         <module>patchbridge-agent-mcp</module>
@@ -54,6 +55,11 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>io.patchbridge.agent</groupId>
+                <artifactId>patchbridge-agent-model-anthropic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>

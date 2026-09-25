@@ -6,6 +6,9 @@ import io.patchbridge.agent.core.invocation.ModelInvocation;
 import io.patchbridge.agent.core.model.ImageSource;
 import io.patchbridge.agent.core.model.ModelRequest;
 import io.patchbridge.agent.core.model.ModelRequests;
+import io.patchbridge.agent.core.model.target.ModelAccessContext;
+import io.patchbridge.agent.core.model.target.ModelProviderRouter;
+import io.patchbridge.agent.core.model.target.ModelTargetRef;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,14 +34,17 @@ public class DemoModelInvocationService {
 
     /** 同 JVM 模型调用入站端口；Starter 默认 Bean 可由宿主同类型 Bean 替换。 */
     private final ModelGateway modelGateway;
+    /** 将 Demo 的默认调用目标解析到统一目录，不在业务服务中解释模型配置。 */
+    private final ModelProviderRouter modelProviderRouter;
 
     /**
      * 创建只依赖公共模型门面的 Demo Service。
      *
      * @param modelGateway Starter 装配或宿主替换的模型调用门面
      */
-    public DemoModelInvocationService(ModelGateway modelGateway) {
+    public DemoModelInvocationService(ModelGateway modelGateway, ModelProviderRouter modelProviderRouter) {
         this.modelGateway = modelGateway;
+        this.modelProviderRouter = modelProviderRouter;
     }
 
     /**
@@ -51,6 +57,7 @@ public class DemoModelInvocationService {
     public ModelInvocation invokeText(String content, AiRequestContext context) {
         requireText(content, "content");
         ModelRequest request = ModelRequests.builder()
+                .modelTarget(defaultTarget())
                 .systemText(TEXT_SYSTEM_PROMPT)
                 .userText(content)
                 .maxTokens(MAX_OUTPUT_TOKENS)
@@ -73,6 +80,7 @@ public class DemoModelInvocationService {
             throw new IllegalArgumentException("imageSource 不可为空");
         }
         ModelRequest request = ModelRequests.builder()
+                .modelTarget(defaultTarget())
                 .systemText(IMAGE_SYSTEM_PROMPT)
                 .userText(prompt)
                 .userImage(imageSource)
@@ -91,5 +99,14 @@ public class DemoModelInvocationService {
         if (value == null || value.trim().isEmpty()) {
             throw new IllegalArgumentException(fieldName + " 不可为空");
         }
+    }
+
+    /** 仅供 Demo 选用已配置的默认目标，权限仍在真正调用时检查。 */
+    private ModelTargetRef defaultTarget() {
+        ModelTargetRef ref = modelProviderRouter.defaultTarget(ModelAccessContext.trustedJvm());
+        if (ref == null) {
+            throw new IllegalStateException("Demo 默认模型目标不可用");
+        }
+        return ref;
     }
 }

@@ -23,14 +23,14 @@ class ModelRequestsTest {
                         .systemText("规则二")
                         .userText("检查图片")
                         .userImage(image)
-                        .model("model-a")
+                        .modelTarget(ModelTestTargets.REF)
                         .modelState(state)
                         .temperature(0.2)
                         .maxTokens(300)
                         .build();
 
         assertEquals("response-1", request.getResponseMessageId());
-        assertEquals("model-a", request.getModel());
+        assertEquals(ModelTestTargets.REF, request.getModelTarget());
         assertSame(state, request.getModelState());
         assertEquals(0.2, request.getTemperature());
         assertEquals(300, request.getMaxTokens());
@@ -52,8 +52,8 @@ class ModelRequestsTest {
     /** 未显式提供消息标识时，每次构建都生成非空且互不复用的调用身份。 */
     @Test
     void generatesFreshMessageIdentifiers() {
-        ModelRequest first = ModelRequests.builder().userText("a").build();
-        ModelRequest second = ModelRequests.builder().userText("b").build();
+        ModelRequest first = ModelRequests.builder().modelTarget(ModelTestTargets.REF).userText("a").build();
+        ModelRequest second = ModelRequests.builder().modelTarget(ModelTestTargets.REF).userText("b").build();
 
         assertNotNull(first.getResponseMessageId());
         assertNotNull(first.getMessages().get(0).getId());
